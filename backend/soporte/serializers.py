@@ -158,6 +158,17 @@ class TicketSerializer(
         allow_blank=True
     )
 
+    estado = serializers.PrimaryKeyRelatedField(
+        queryset=EstadoTicket.objects.all(),
+        required=False
+    )
+
+    solucion = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True
+    )
+
     fecha_limite = serializers.DateTimeField(
         source="sla_fecha_limite",
         required=False,
@@ -323,6 +334,7 @@ class TicketSerializer(
             "fecha_limite",
             "fecha_cierre",
             "vencido",
+            "solucion",
 
             "estado_nombre",
 
@@ -487,8 +499,6 @@ class TicketSerializer(
             "codigo",
 
             "solicitante",
-
-            "estado",
 
             "tecnico_asignado",
 
@@ -1081,6 +1091,35 @@ class TicketSerializer(
         if cat_code in ['RED', 'SERVIDORES']:
             attrs['prioridad'] = 'ALTA'
 
+        # ==================================================
+        # REGLA 05: Flujo de estados controlado
+        # ==================================================
+        nuevo_estado = attrs.get('estado')
+        if self.instance and nuevo_estado and nuevo_estado != self.instance.estado:
+            est_origen = self.instance.estado.codigo if self.instance.estado else None
+            est_destino = nuevo_estado.codigo if hasattr(nuevo_estado, 'codigo') else str(nuevo_estado)
+
+            if est_origen != est_destino:
+                transiciones_validas = {
+                    'ABIERTO': ['EN_PROCESO'],
+                    'EN_PROCESO': ['RESUELTO'],
+                    'RESUELTO': ['CERRADO', 'EN_PROCESO'],
+                    'CERRADO': ['EN_PROCESO'],
+                }
+                destinos_posibles = transiciones_validas.get(est_origen, [])
+                if est_destino not in destinos_posibles:
+                    raise serializers.ValidationError({
+                        "estado": f"Transición no permitida de {est_origen} a {est_destino}."
+                    })
+
+                # R05: EN_PROCESO -> RESUELTO requiere obligatorio un comentario/campo solucion
+                if est_destino == 'RESUELTO':
+                    sol = attrs.get('solucion') or getattr(self.instance, 'solucion', '') or attrs.get('diagnostico')
+                    if not sol or not str(sol).strip():
+                        raise serializers.ValidationError({
+                            "solucion": "Debe especificar la solución para resolver el ticket."
+                        })
+
         # --------------------------------------------------
         # VALIDACIONES
         # --------------------------------------------------
@@ -1179,27 +1218,14 @@ class TicketSerializer(
         # ESTADO INICIAL
         # ==================================================
 
-        try:
-
-            estado_nuevo = (
-                EstadoTicket.objects
-                .get(
-                    codigo="NUEVO",
-                    activo=True
-                )
-            )
-
-
-        except EstadoTicket.DoesNotExist:
-
-            raise serializers.ValidationError(
-                {
-                    "estado": (
-                        "No existe el estado NUEVO "
-                        "activo en el sistema."
-                    )
-                }
-            )
+        estado_nuevo = (
+            EstadoTicket.objects.filter(codigo="ABIERTO", activo=True).first()
+            or EstadoTicket.objects.filter(codigo="NUEVO", activo=True).first()
+            or EstadoTicket.objects.filter(es_inicial=True, activo=True).first()
+            or EstadoTicket.objects.first()
+        )
+        if not estado_nuevo:
+            estado_nuevo = EstadoTicket.objects.create(codigo="ABIERTO", nombre="Abierto", es_inicial=True, activo=True)
 
 
         # ==================================================

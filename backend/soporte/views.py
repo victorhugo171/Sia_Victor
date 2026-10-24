@@ -450,6 +450,25 @@ class TicketViewSet(
     def documento_pdf(self, request, pk=None, documento_id=None):
         return pdf_documento(self, request, pk, documento_id)
 
+    @action(detail=True, methods=["post"], url_path="cambiar-estado")
+    def cambiar_estado(self, request, pk=None):
+        ticket = self.get_object()
+        nuevo_cod = request.data.get("estado") or request.data.get("nuevo_estado")
+        if not nuevo_cod:
+            return Response({"detalle": "Debe especificar el nuevo estado."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            nuevo_estado = EstadoTicket.objects.get(codigo=nuevo_cod.upper())
+        except EstadoTicket.DoesNotExist:
+            return Response({"detalle": f"Estado '{nuevo_cod}' no existe."}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = {"estado": nuevo_estado.id}
+        if "solucion" in request.data:
+            data["solucion"] = request.data["solucion"]
+        serializer = self.get_serializer(ticket, data=data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
     serializer_class = (
         TicketSerializer
     )
