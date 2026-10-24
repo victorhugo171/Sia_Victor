@@ -559,6 +559,31 @@ class Ticket(models.Model):
     # ======================================================
 
     @property
+    def fecha_limite(self):
+        return self.sla_fecha_limite
+
+    @fecha_limite.setter
+    def fecha_limite(self, value):
+        self.sla_fecha_limite = value
+
+    @property
+    def fecha_cierre(self):
+        return self.cerrado_en
+
+    @fecha_cierre.setter
+    def fecha_cierre(self, value):
+        self.cerrado_en = value
+
+    @property
+    def vencido(self):
+        if not self.fecha_limite:
+            return False
+        if self.estado and self.estado.codigo in ['RESUELTO', 'CERRADO']:
+            return False
+        from django.utils import timezone
+        return timezone.now() > self.fecha_limite
+
+    @property
     def tiene_sla(self):
 
         return (

@@ -1,3 +1,4 @@
+from datetime import timedelta
 from usuarios.archivos import firmar_urls
 from django.utils import timezone
 
@@ -157,6 +158,22 @@ class TicketSerializer(
         allow_blank=True
     )
 
+    fecha_limite = serializers.DateTimeField(
+        source="sla_fecha_limite",
+        required=False,
+        allow_null=True
+    )
+
+    fecha_cierre = serializers.DateTimeField(
+        source="cerrado_en",
+        required=False,
+        allow_null=True
+    )
+
+    vencido = serializers.BooleanField(
+        read_only=True
+    )
+
 
     # ======================================================
     # EVIDENCIA
@@ -303,6 +320,9 @@ class TicketSerializer(
             # ------------------------------------------------
 
             "estado",
+            "fecha_limite",
+            "fecha_cierre",
+            "vencido",
 
             "estado_nombre",
 
@@ -1251,6 +1271,21 @@ class TicketSerializer(
         # CREAR
         # ==========================================================
 
+        prioridad = validated_data.pop("prioridad", None)
+        sla_horas = None
+        sla_fecha_limite = None
+        if prioridad:
+            horas_map = {"ALTA": 4, "MEDIA": 24, "BAJA": 72}
+            sla_horas = horas_map.get(str(prioridad).upper(), 24)
+            try:
+                from zoneinfo import ZoneInfo
+                tz_lp = ZoneInfo("America/La_Paz")
+            except Exception:
+                import pytz
+                tz_lp = pytz.timezone("America/La_Paz")
+            ahora_lp = timezone.now().astimezone(tz_lp)
+            sla_fecha_limite = ahora_lp + timedelta(hours=sla_horas)
+
         ticket = (
             Ticket.objects.create(
 
@@ -1270,11 +1305,11 @@ class TicketSerializer(
                 #
                 # ==========================================
 
-                prioridad=validated_data.pop("prioridad", None),
+                prioridad=prioridad,
 
-                sla_horas=None,
+                sla_horas=sla_horas,
 
-                sla_fecha_limite=None,
+                sla_fecha_limite=sla_fecha_limite,
 
                 sla_cumplido=None,
 
