@@ -469,6 +469,38 @@ class TicketViewSet(
         serializer.save()
         return Response(serializer.data)
 
+    @action(detail=True, methods=["post"], url_path="reabrir")
+    def reabrir(self, request, pk=None):
+        ticket = self.get_object()
+        # R06: Solo el solicitante puede reabrir
+        if ticket.solicitante_id != request.user.id and not request.user.is_superuser:
+            return Response(
+                {"detalle": "Solo el usuario solicitante puede reabrir el ticket."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        # R06: Estado debe ser CERRADO
+        if not ticket.estado or ticket.estado.codigo != "CERRADO":
+            return Response(
+                {"detalle": "Solo se pueden reabrir tickets cerrados."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        # R06: Dentro de 7 días posteriores a fecha_cierre
+        fcierre = ticket.fecha_cierre or ticket.cerrado_en
+        if fcierre:
+            dias = (timezone.now() - fcierre).total_seconds() / 86400.0
+            if dias > 7:
+                return Response(
+                    {"detalle": "No se puede reabrir el ticket porque han pasado más de 7 días desde su cierre."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        try:
+            estado_proc = EstadoTicket.objects.get(codigo="EN_PROCESO")
+        except EstadoTicket.DoesNotExist:
+            estado_proc = EstadoTicket.objects.create(codigo="EN_PROCESO", nombre="En proceso")
+        ticket.estado = estado_proc
+        ticket.save(update_fields=["estado"])
+        return Response(self.get_serializer(ticket).data)
+
     serializer_class = (
         TicketSerializer
     )

@@ -1120,6 +1120,21 @@ class TicketSerializer(
                             "solucion": "Debe especificar la solución para resolver el ticket."
                         })
 
+                # R06: CERRADO -> EN_PROCESO (Reapertura dentro de 7 días solo por el solicitante)
+                if est_origen == 'CERRADO' and est_destino == 'EN_PROCESO':
+                    request = self.context.get('request')
+                    if request and request.user != self.instance.solicitante and not request.user.is_superuser:
+                        raise serializers.ValidationError({
+                            "detalle": "Solo el usuario solicitante puede reabrir el ticket."
+                        })
+                    fcierre = self.instance.fecha_cierre or self.instance.cerrado_en
+                    if fcierre:
+                        dias = (timezone.now() - fcierre).total_seconds() / 86400.0
+                        if dias > 7:
+                            raise serializers.ValidationError({
+                                "detalle": "No se puede reabrir el ticket porque han pasado más de 7 días desde su cierre."
+                            })
+
         # --------------------------------------------------
         # VALIDACIONES
         # --------------------------------------------------
