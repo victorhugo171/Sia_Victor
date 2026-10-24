@@ -256,13 +256,13 @@
                   </div>
 
                   <div
-                    v-if="ticket.sla_horas"
+                    v-if="ticket.vencido || ticket.sla_horas"
                     :class="[
                       'sla-badge',
-                      claseSla(ticket.sla_estado)
+                      ticket.vencido ? 'sla-vencido' : claseSla(ticket.sla_estado)
                     ]"
                   >
-                    {{ textoSla(ticket) }}
+                    {{ ticket.vencido ? 'Vencido' : textoSla(ticket) }}
                   </div>
 
                   <h3>
@@ -903,6 +903,7 @@
 
                 <select
                   v-model="formClasificacion.prioridad"
+                  :disabled="esPrioridadBloqueada"
                 >
                   <option value="">
                     Seleccione prioridad
@@ -1588,6 +1589,21 @@ const formClasificacion = reactive({
   criterio_tecnico: '',
 })
 
+const esPrioridadBloqueada = computed(() => {
+  const cat = ticketSeleccionado.value?.categoria_codigo || ticketSeleccionado.value?.categoria?.codigo || ''
+  return ['RED', 'SERVIDORES'].includes(String(cat).toUpperCase())
+})
+
+watch(
+  () => [ticketSeleccionado.value, esPrioridadBloqueada.value],
+  ([ticket, bloqueada]) => {
+    if (bloqueada) {
+      formClasificacion.prioridad = 'ALTA'
+    }
+  },
+  { immediate: true }
+)
+
 const formAsignacion = reactive({
   tecnico_id: '',
 })
@@ -2138,9 +2154,9 @@ const slaPreview =
 
     const valores = {
       CRITICA: '4 horas',
-      ALTA: '8 horas',
+      ALTA: '4 horas',
       MEDIA: '24 horas',
-      BAJA: '48 horas',
+      BAJA: '72 horas',
     }
 
 

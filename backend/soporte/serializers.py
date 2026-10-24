@@ -151,6 +151,12 @@ class TicketSerializer(
         required=False
     )
 
+    prioridad = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True
+    )
+
 
     # ======================================================
     # EVIDENCIA
@@ -273,8 +279,6 @@ class TicketSerializer(
             "categoria_codigo",
 
             "tipo_problema",
-
-            "prioridad",
 
             "criterio_tecnico",
 
@@ -471,8 +475,6 @@ class TicketSerializer(
             "especialistas_apoyo",
 
             "tipo_problema",
-
-            "prioridad",
 
             "criterio_tecnico",
 
@@ -1038,6 +1040,27 @@ class TicketSerializer(
         )
 
 
+        # ==================================================
+        # REGLA 03: Prioridad alta automática por categoría
+        # ==================================================
+        cat = attrs.get('categoria')
+        if cat is None and self.instance:
+            cat = self.instance.categoria
+
+        cat_code = ""
+        if cat:
+            if hasattr(cat, 'codigo'):
+                cat_code = str(cat.codigo).upper()
+            elif isinstance(cat, (int, str)):
+                try:
+                    c_obj = CategoriaTicket.objects.get(id=cat) if str(cat).isdigit() else CategoriaTicket.objects.get(codigo__iexact=str(cat))
+                    cat_code = c_obj.codigo.upper()
+                except Exception:
+                    cat_code = str(cat).upper()
+
+        if cat_code in ['RED', 'SERVIDORES']:
+            attrs['prioridad'] = 'ALTA'
+
         # --------------------------------------------------
         # VALIDACIONES
         # --------------------------------------------------
@@ -1247,7 +1270,7 @@ class TicketSerializer(
                 #
                 # ==========================================
 
-                prioridad=None,
+                prioridad=validated_data.pop("prioridad", None),
 
                 sla_horas=None,
 
