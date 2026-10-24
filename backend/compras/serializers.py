@@ -1,5 +1,6 @@
 from usuarios.archivos import firmar_urls
 from urllib.parse import urlsplit
+from django.conf import settings
 
 from rest_framework import serializers
 
@@ -39,15 +40,28 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
     def get_receptor_acta(self, obj):
         from .actas_almacen import receptor_acta
         receptor = receptor_acta(obj)
-        return {'id': receptor.pk, 'nombre': receptor.nombre_completo, 'tecnico': bool(obj.requerimiento_mantenimiento_id or obj.ticket_soporte_id)} if receptor else None
+        return {
+            'id': receptor.pk,
+            'nombre': receptor.nombre_completo,
+            'tecnico': bool(obj.requerimiento_mantenimiento_id or obj.ticket_soporte_id)
+        } if receptor else None
 
     monto_estimado = MontoEstimadoField(max_digits=12, decimal_places=2, min_value=0, required=False, allow_null=True)
+
+    # --- REGLA 01: Validación de Límite de Caja Chica ---
+    def validate_monto_estimado(self, value):
+        # Lee la variable SIA_LIMITE_CAJA_CHICA del .env (por defecto 1000)
+        limite = getattr(settings, 'SIA_LIMITE_CAJA_CHICA', 1000.0)
+        if value and value > limite:
+            raise serializers.ValidationError(
+                f"El monto de la compra (Bs {value:.2f}) supera el límite máximo permitido de Caja Chica (Bs {limite:.2f})."
+            )
+        return value
 
     # El expediente dice por sí mismo de quién depende ahora: evita que
     # cada área tenga que preguntar en qué punto va el trámite.
     responsable_actual = serializers.SerializerMethodField()
     situacion = serializers.SerializerMethodField()
-
 
     solicitante_nombre = serializers.CharField(
         source="solicitante.nombre_completo",
