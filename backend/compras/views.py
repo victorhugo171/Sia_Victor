@@ -1,3 +1,6 @@
+from rest_framework.views import APIView
+from django.conf import settings
+from django.db import models
 from usuarios.documentos import documentar, documentos_expediente, pdf_documento
 from rest_framework import (
     status,
@@ -155,6 +158,53 @@ def respuesta_sin_permiso(codigo_permiso):
 # ==========================================================
 # SOLICITUDES DE COMPRA
 # ==========================================================
+
+
+def calcular_saldo_caja_chica():
+    ahora = timezone.now()
+    fondo = Decimal(str(getattr(settings, "SIA_FONDO_MENSUAL", 5000.0)))
+    estados_comprometidos = [
+        "APROBADO_PARA_DESEMBOLSO",
+        "FONDOS_DESEMBOLSADOS",
+        "COMPRA_REGISTRADA",
+        "COMPRADO_Y_ENTREGADO",
+        "DESCARGO_PENDIENTE_LIQUIDACION",
+        "CERRADO_ARCHIVADO",
+    ]
+    compras_mes = SolicitudCompra.objects.filter(
+        via_adquisicion="CAJA_CHICA",
+        activo=True,
+        creado_en__year=ahora.year,
+        creado_en__month=ahora.month,
+        estado__in=estados_comprometidos
+    )
+    total_gastado = Decimal("0.00")
+    for c in compras_mes:
+        monto = c.monto_real or c.monto_desembolsado or c.monto_estimado or Decimal("0.00")
+        total_gastado += monto
+
+    saldo_restante = fondo - total_gastado
+    return {
+        "fondo": float(fondo),
+        "total_gastado": float(total_gastado),
+        "saldo_restante": float(saldo_restante),
+        "fondo_decimal": fondo,
+        "total_gastado_decimal": total_gastado,
+        "saldo_restante_decimal": saldo_restante,
+    }
+
+
+class SaldoCajaChicaView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        info = calcular_saldo_caja_chica()
+        return Response({
+            "fondo": info["fondo"],
+            "total_gastado": info["total_gastado"],
+            "saldo_restante": info["saldo_restante"]
+        })
+
 
 class SolicitudCompraViewSet(
     viewsets.ModelViewSet
@@ -665,9 +715,27 @@ class SolicitudCompraViewSet(
                     {"detalle": "Las compras mayores a Bs 300 solo pueden ser aprobadas por usuarios pertenecientes al grupo 'Jefe administrativo'."},
                     status=status.HTTP_403_FORBIDDEN
                 )
+        else:
+            if not (tiene_permiso_vb or es_jefe_admin or request.user.is_superuser):
+                return Response(
+                    {"detalle": "No tiene permiso para aprobar solicitudes de compra."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
-        if tiene_permiso_vb:
-            return self._transicion(request, solicitud, "DAR_VISTO_BUENO", ["VERIFICADO_PENDIENTE_AUTORIZACION"], "APROBADO_PARA_DESEMBOLSO", "VISTO_BUENO_DIRECTOR", "Aprobado; expediente derivado automáticamente a Tesorería para desembolso.")
+        # R09: No aprobar compras que dejen el saldo en negativo
+        info_saldo = calcular_saldo_caja_chica()
+        if (info_saldo["saldo_restante_decimal"] - monto) < 0:
+            return Response(
+                {
+                    "detalle": f"No se puede aprobar la compra. Fondos insuficientes en Caja Chica. Saldo restante: Bs {info_saldo['saldo_restante_decimal']:.2f}, Monto requerido: Bs {monto:.2f}."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Si el usuario es Jefe administrativo pero no tiene el permiso explícito en BD, omitir el chequeo interno en _transicion
+        permiso_check = "DAR_VISTO_BUENO" if tiene_permiso_vb else None
+        if permiso_check:
+            return self._transicion(request, solicitud, permiso_check, ["VERIFICADO_PENDIENTE_AUTORIZACION"], "APROBADO_PARA_DESEMBOLSO", "VISTO_BUENO_DIRECTOR", "Aprobado; expediente derivado automáticamente a Tesorería para desembolso.")
         else:
             if solicitud.cerrado_inmutable:
                 return Response({"detalle": "El expediente está cerrado y es inmutable."}, status=status.HTTP_409_CONFLICT)

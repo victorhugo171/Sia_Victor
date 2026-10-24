@@ -193,6 +193,13 @@ PASSWORD_HASHERS = [
 # VALIDACIÓN DE CONTRASEÑAS
 # ==========================================================
 
+# ==========================================================
+# CONFIGURACIÓN SIA - REGLAS DE NEGOCIO (CAJA CHICA)
+# ==========================================================
+
+SIA_LIMITE_CAJA_CHICA = float(os.environ.get('SIA_LIMITE_CAJA_CHICA', '1000.0'))
+SIA_FONDO_MENSUAL = float(os.environ.get('SIA_FONDO_MENSUAL', '5000.0'))
+
 AUTH_PASSWORD_VALIDATORS = [
 
     {

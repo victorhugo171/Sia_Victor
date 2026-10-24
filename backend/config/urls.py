@@ -1,3 +1,4 @@
+from compras.views import SaldoCajaChicaView
 """
 URL configuration for config project.
 
@@ -61,8 +62,14 @@ urlpatterns = [
     ),
 
     # ======================================================
-    # COMPRAS
+    # COMPRAS Y CAJA CHICA
     # ======================================================
+
+    path(
+        "api/caja-chica/saldo/",
+        SaldoCajaChicaView.as_view(),
+        name="caja-chica-saldo"
+    ),
 
     path(
         "api/compras/",

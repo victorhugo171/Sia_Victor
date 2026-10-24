@@ -1,3 +1,4 @@
+from decimal import Decimal
 from urllib.parse import urlsplit
 from django.conf import settings
 from rest_framework import serializers
@@ -46,12 +47,14 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
         } if receptor else None
 
     monto_estimado = MontoEstimadoField(max_digits=12, decimal_places=2, min_value=0, required=False, allow_null=True)
+    cotizaciones = serializers.ListField(required=False, write_only=True)
 
     # --- REGLA 01: Validación de Límite de Caja Chica ---
     def validate_monto_estimado(self, value):
-        # Lee la variable SIA_LIMITE_CAJA_CHICA del .env (por defecto 1000)
-        limite = getattr(settings, 'SIA_LIMITE_CAJA_CHICA', 1000.0)
-        if value and value > limite:
+        # Lee la variable SIA_LIMITE_CAJA_CHICA dinámicamente desde settings (por defecto 1000.0)
+        limite_val = getattr(settings, 'SIA_LIMITE_CAJA_CHICA', 1000.0)
+        limite = Decimal(str(limite_val))
+        if value is not None and value > limite:
             raise serializers.ValidationError(
                 f"El monto de la compra (Bs {value:.2f}) supera el límite máximo permitido de Caja Chica (Bs {limite:.2f})."
             )
@@ -111,6 +114,7 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
             "justificacion",
             "centro_costo",
             "monto_estimado",
+            "cotizaciones",
             "via_adquisicion",
             "via_nombre",
             "estado",
@@ -218,6 +222,7 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
         return firmar_urls(data, self.context.get('request'))
 
     def create(self, validated_data):
+        validated_data.pop('cotizaciones', None)
         request = self.context["request"]
         usuario = request.user
         return SolicitudCompra.objects.create(
@@ -228,6 +233,36 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
+        # === REGLA 02: Tres cotizaciones de proveedores distintos para compras > Bs 500 ===
+        monto = attrs.get('monto_estimado')
+        if monto is None and self.instance:
+            monto = self.instance.monto_estimado
+        if monto and float(monto) > 500:
+            cotizaciones = attrs.get('cotizaciones')
+            if cotizaciones is None:
+                cotizaciones = self.initial_data.get('cotizaciones')
+            if cotizaciones is None and self.instance:
+                cotizaciones = list(self.instance.cotizaciones.all())
+            cotizaciones = cotizaciones or []
+
+            # 1. Validar cantidad mínima de 3 cotizaciones
+            if len(cotizaciones) < 3:
+                raise serializers.ValidationError({
+                    "cotizaciones": "Toda compra mayor a Bs 500.00 requiere adjuntar al menos 3 cotizaciones."
+                })
+
+            # 2. Validar que los proveedores sean distintos
+            proveedores = set()
+            for cot in cotizaciones:
+                prov = cot.get('proveedor') if isinstance(cot, dict) else getattr(cot, 'proveedor', None)
+                if prov:
+                    proveedores.add(str(prov).strip().lower())
+
+            if len(proveedores) < 3:
+                raise serializers.ValidationError({
+                    "cotizaciones": "Las 3 cotizaciones deben pertenecer a proveedores distintos."
+                })
+
         # BPMN: la solicitud viaja respaldada por Informe, Proforma y POA.
         # El "pedido" se conserva como documento opcional del expediente.
         if self.instance is None:
@@ -256,29 +291,6 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "proforma": "La cotización debe ser PDF, JPG, JPEG o PNG."
             })
-
-        # === REGLA 02: Tres cotizaciones de proveedores distintos para compras > Bs 500 ===
-        monto = attrs.get('monto_estimado') or (self.instance.monto_estimado if self.instance else 0)
-        if monto and float(monto) > 500:
-            cotizaciones = attrs.get('cotizaciones') or []
-            
-            # 1. Validar cantidad mínima de 3 cotizaciones
-            if len(cotizaciones) < 3:
-                raise serializers.ValidationError({
-                    "cotizaciones": "Toda compra mayor a Bs 500.00 requiere adjuntar al menos 3 cotizaciones."
-                })
-                
-            # 2. Validar que los proveedores sean distintos
-            proveedores = set()
-            for cot in cotizaciones:
-                prov = cot.get('proveedor') if isinstance(cot, dict) else getattr(cot, 'proveedor', None)
-                if prov:
-                    proveedores.add(str(prov).strip().lower())
-                    
-            if len(proveedores) < 3:
-                raise serializers.ValidationError({
-                    "cotizaciones": "Las 3 cotizaciones deben pertenecer a proveedores distintos."
-                })
 
         return attrs
 
