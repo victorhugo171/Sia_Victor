@@ -297,7 +297,15 @@ class SolicitudCompraViewSet(
         # recibe directamente la solicitud de compra (no existe una
         # jefatura que se la asigne previamente), así que ve la misma
         # bandeja que el resto de los actores del proceso.
-        if tiene_permiso(usuario, "VER_COMPRAS"):
+        if tiene_permiso(usuario, "VER_COMPRAS") or (self.action in ("visto_bueno_director", "aprobar") and (
+            usuario.is_superuser
+            or usuario.groups.filter(name__iexact="Jefe administrativo").exists()
+            or (hasattr(usuario, "roles_asignados") and usuario.roles_asignados.filter(
+                models.Q(rol__nombre__iexact="Jefe administrativo") | models.Q(rol__codigo__iexact="JEFE_ADMINISTRATIVO"),
+                activo=True
+            ).exists())
+            or tiene_permiso(usuario, "DAR_VISTO_BUENO")
+        )):
             return queryset
 
 
@@ -623,9 +631,56 @@ class SolicitudCompraViewSet(
 
     @action(detail=True, methods=["post"], url_path="visto-bueno-director")
     def visto_bueno_director(self, request, pk=None):
-        # Igual que certificar-daf: al dar el visto bueno, el expediente
-        # queda automáticamente disponible para Tesorería (desembolso).
-        return self._transicion(request, self.get_object(), "DAR_VISTO_BUENO", ["VERIFICADO_PENDIENTE_AUTORIZACION"], "APROBADO_PARA_DESEMBOLSO", "VISTO_BUENO_DIRECTOR", "Director autorizó; expediente derivado automáticamente a Tesorería para desembolso.")
+        # R08: Comprobar permiso básico de aprobación antes de resolver el objeto para garantizar 403 Forbidden a usuarios comunes
+        es_jefe_admin = (
+            request.user.is_superuser
+            or request.user.groups.filter(name__iexact="Jefe administrativo").exists()
+            or (hasattr(request.user, "roles_asignados") and request.user.roles_asignados.filter(
+                models.Q(rol__nombre__iexact="Jefe administrativo") | models.Q(rol__codigo__iexact="JEFE_ADMINISTRATIVO"),
+                activo=True
+            ).exists())
+        )
+        tiene_permiso_vb = tiene_permiso(request.user, "DAR_VISTO_BUENO")
+
+        if not (es_jefe_admin or tiene_permiso_vb):
+            return Response(
+                {"detalle": "No tiene permiso para aprobar solicitudes de compra."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        solicitud = self.get_object()
+
+        # R08: Nadie puede aprobar su propia compra
+        if solicitud.solicitante_id == request.user.id:
+            return Response(
+                {"detalle": "No puede aprobar su propia solicitud de compra."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Si monto > 300 solo puede ser aprobada por Jefe administrativo
+        monto = solicitud.monto_estimado or Decimal("0.00")
+        if monto > 300:
+            if not es_jefe_admin:
+                return Response(
+                    {"detalle": "Las compras mayores a Bs 300 solo pueden ser aprobadas por usuarios pertenecientes al grupo 'Jefe administrativo'."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        if tiene_permiso_vb:
+            return self._transicion(request, solicitud, "DAR_VISTO_BUENO", ["VERIFICADO_PENDIENTE_AUTORIZACION"], "APROBADO_PARA_DESEMBOLSO", "VISTO_BUENO_DIRECTOR", "Aprobado; expediente derivado automáticamente a Tesorería para desembolso.")
+        else:
+            if solicitud.cerrado_inmutable:
+                return Response({"detalle": "El expediente está cerrado y es inmutable."}, status=status.HTTP_409_CONFLICT)
+            if solicitud.estado not in ["VERIFICADO_PENDIENTE_AUTORIZACION"]:
+                return Response({"detalle": f"Transición no permitida desde {solicitud.estado}."}, status=status.HTTP_409_CONFLICT)
+            solicitud.estado = "APROBADO_PARA_DESEMBOLSO"
+            solicitud.save()
+            registrar_bitacora(request=request, accion="VISTO_BUENO_DIRECTOR", modulo="Compras", detalle=f"{solicitud.codigo}: Aprobado por Jefe administrativo; expediente derivado a Tesorería.", nivel="INFO")
+            return Response(self.get_serializer(solicitud).data)
+
+    @action(detail=True, methods=["post"], url_path="aprobar")
+    def aprobar(self, request, pk=None):
+        return self.visto_bueno_director(request, pk)
 
     @action(detail=True, methods=["post"], url_path="rechazar")
     def rechazar(self, request, pk=None):
