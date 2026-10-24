@@ -1,10 +1,11 @@
+from django.db import transaction
 from datetime import timedelta
 from usuarios.archivos import firmar_urls
 from django.utils import timezone
 
 from rest_framework import serializers
 
-from usuarios.models import Area
+from usuarios.models import Area, Usuario
 
 from .models import (
     CategoriaTicket,
@@ -166,6 +167,12 @@ class TicketSerializer(
     solucion = serializers.CharField(
         required=False,
         allow_blank=True,
+        allow_null=True
+    )
+
+    tecnico_asignado = serializers.PrimaryKeyRelatedField(
+        queryset=Usuario.objects.all(),
+        required=False,
         allow_null=True
     )
 
@@ -499,8 +506,6 @@ class TicketSerializer(
             "codigo",
 
             "solicitante",
-
-            "tecnico_asignado",
 
             "especialistas_apoyo",
 
@@ -1192,6 +1197,23 @@ class TicketSerializer(
                     }
                 )
 
+
+        # ==================================================
+        # REGLA 07: Máximo 5 tickets activos por técnico
+        # ==================================================
+        tecnico = attrs.get('tecnico_asignado')
+        if tecnico:
+            with transaction.atomic():
+                activos_count = Ticket.objects.select_for_update().filter(
+                    tecnico_asignado=tecnico,
+                    estado__codigo__in=['ABIERTO', 'EN_PROCESO']
+                )
+                if self.instance and self.instance.pk:
+                    activos_count = activos_count.exclude(pk=self.instance.pk)
+                if activos_count.count() >= 5:
+                    raise serializers.ValidationError({
+                        "tecnico_asignado": "Un técnico no puede tener asignados más de 5 tickets en estado ABIERTO o EN_PROCESO."
+                    })
 
         return attrs
 

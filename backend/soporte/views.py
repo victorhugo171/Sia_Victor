@@ -1346,6 +1346,19 @@ class TicketViewSet(
                     status.HTTP_400_BAD_REQUEST
             )
 
+        # REGLA 07: Máximo 5 tickets activos por técnico
+        from django.db import transaction
+        with transaction.atomic():
+            activos = Ticket.objects.select_for_update().filter(
+                tecnico_asignado=tecnico,
+                estado__codigo__in=["ABIERTO", "EN_PROCESO", "ASIGNADO", "EN_EJECUCION"]
+            ).exclude(pk=ticket.pk)
+            if activos.count() >= 5:
+                return Response(
+                    {"tecnico_id": "Un técnico no puede tener asignados más de 5 tickets en estado ABIERTO o EN_PROCESO."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
 
         estado_asignado = obtener_estado(
             "ASIGNADO"
