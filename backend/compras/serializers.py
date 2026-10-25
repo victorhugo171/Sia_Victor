@@ -56,7 +56,7 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
         limite = Decimal(str(limite_val))
         if value is not None and value > limite:
             raise serializers.ValidationError(
-                f"El monto de la compra (Bs {value:.2f}) supera el límite máximo permitido de Caja Chica (Bs {limite:.2f})."
+                f"El monto del requerimiento (Bs {value:.2f}) supera el límite máximo permitido de Caja Chica (Bs {limite:.2f})."
             )
         return value
 

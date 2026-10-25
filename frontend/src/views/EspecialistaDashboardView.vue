@@ -121,6 +121,9 @@
             <label><input v-model="formDiagnostico.requiere_compra" type="radio" :value="true"> Sí</label>
           </fieldset>
 
+          <div v-if="errorRequerimiento" class="alerta-error-roja" style="background:#fee2e2; border:1px solid #ef4444; color:#b91c1c; padding:10px 14px; border-radius:6px; margin:10px 0; font-weight:600; font-size:13px;">
+            ⚠️ {{ errorRequerimiento }}
+          </div>
           <div class="actions">
             <button @click="cerrarOrden">Cancelar</button>
             <button class="primary" :disabled="procesando || !formDiagnostico.diagnostico.trim() || formDiagnostico.requiere_compra===null" @click="guardarDiagnostico">
@@ -153,6 +156,9 @@
           <label class="campo">Cotización / proforma
             <input type="file" accept="application/pdf,image/*" @change="onCotizacion">
           </label>
+          <div v-if="errorRequerimiento" class="alerta-error-roja" style="background:#fee2e2; border:1px solid #ef4444; color:#b91c1c; padding:10px 14px; border-radius:6px; margin:10px 0; font-weight:600; font-size:13px;">
+            ⚠️ {{ errorRequerimiento }}
+          </div>
           <div class="actions">
             <button @click="cerrarOrden">Cancelar</button>
             <button :disabled="procesando" @click="guardarBorrador">Guardar borrador</button>
@@ -342,6 +348,7 @@ const tickets = ref([])
 const notificacionesPendientes = ref(0)
 const cargando = ref(false)
 const procesando = ref(false)
+const errorRequerimiento = ref("")
 const ticketActivo = ref(null)
 const ordenAbierta = ref(null)
 const modoComponente = ref(false)
@@ -655,12 +662,16 @@ async function guardarBorrador() {
 }
 
 async function enviarRequerimiento() {
+  errorRequerimiento.value = ''
   try {
     await postAccion(ordenAbierta.value, 'solicitar-requerimiento-componente', datosRequerimiento(), true)
     cerrarOrden()
     vista.value = 'curso'
     mostrarMensaje('Requerimiento enviado', 'El Jefe UTIC recibió el requerimiento. La orden permanece visible en Trabajos en curso.')
-  } catch (e) { mostrarMensaje('No se pudo enviar el requerimiento', String(e.message), 'error') }
+  } catch (e) {
+    errorRequerimiento.value = String(e.message || 'No se pudo enviar el requerimiento.')
+    mostrarMensaje('No se pudo enviar el requerimiento', String(e.message), 'error')
+  }
 }
 
 /* ==========================================================

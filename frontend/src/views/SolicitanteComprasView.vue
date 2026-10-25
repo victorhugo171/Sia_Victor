@@ -983,9 +983,14 @@ async function guardar() {
 
       console.error(datos)
 
-      mensajeModal.value =
-        datos.detalle
+      const primerDetalle = (
+        datos.monto_estimado
+        || datos.costo_estimado
+        || datos.detalle
+        || (typeof datos === 'object' && datos !== null ? Object.values(datos)[0] : null)
         || 'Revise la información ingresada.'
+      )
+      mensajeModal.value = Array.isArray(primerDetalle) ? primerDetalle[0] : String(primerDetalle)
 
       return
     }
