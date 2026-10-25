@@ -31,7 +31,12 @@
           <div class="section-title"><b>3</b><div><h2>Cantidad y presupuesto estimado</h2><p>Indique las cantidades requeridas y el costo aproximado de la adquisición.</p></div></div>
           <div class="fields two">
             <label>Cantidad <em>*</em><input v-model.number="form.cantidad" type="number" min="1" required></label>
-            <label>Monto estimado (Bs)<input v-monto inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" v-model="form.monto_estimado" type="text" min="0" step="0.01" placeholder="Ej.: 850.00"></label>
+            <label>Monto estimado (Bs)
+              <input v-monto inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" v-model="form.monto_estimado" type="text" min="0" step="0.01" placeholder="Ej.: 850.00">
+              <span v-if="Number(form.monto_estimado) > 1000" style="color:var(--sigta-error); font-weight:bold; font-size:11px; display:block; margin-top:4px;">
+                ⚠️ Advertencia: El monto supera el límite de Caja Chica (Bs 1.000,00).
+              </span>
+            </label>
             <label>Centro de costo<input v-model="form.centro_costo" placeholder="Opcional"></label>
             <label>Ticket de soporte vinculado<input v-model="form.ticket_soporte_vinculado" placeholder="Ej.: SOP-2026-0002"></label>
           </div>

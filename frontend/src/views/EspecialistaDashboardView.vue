@@ -152,6 +152,9 @@
           <label class="campo">Costo estimado (Bs.)
             <input v-monto inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" v-model="formComponente.costo_estimado" type="text" min="0" step="0.01">
           </label>
+          <div v-if="Number(formComponente.costo_estimado) > 1000" class="alerta-error-roja" style="background:#fee2e2; border:1px solid #ef4444; color:#b91c1c; padding:8px 12px; border-radius:6px; margin:6px 0 10px 0; font-weight:600; font-size:12px;">
+            ⚠️ Advertencia: El costo estimado de la cotización (Bs. {{ Number(formComponente.costo_estimado).toFixed(2) }}) no debe superar el límite de Caja Chica (Bs. 1.000,00).
+          </div>
           <a v-if="ordenAbierta?.informe_compra" :href="ordenAbierta.informe_compra" target="_blank">Ver informe de requerimiento generado</a>
           <label class="campo">Cotización / proforma
             <input type="file" accept="application/pdf,image/*" @change="onCotizacion">
@@ -663,6 +666,11 @@ async function guardarBorrador() {
 
 async function enviarRequerimiento() {
   errorRequerimiento.value = ''
+  if (Number(formComponente.costo_estimado) > 1000) {
+    errorRequerimiento.value = `El monto del requerimiento (Bs ${Number(formComponente.costo_estimado).toFixed(2)}) supera el límite máximo permitido de Caja Chica (Bs 1000.00).`
+    mostrarMensaje('Límite de Caja Chica superado', errorRequerimiento.value, 'error')
+    return
+  }
   try {
     await postAccion(ordenAbierta.value, 'solicitar-requerimiento-componente', datosRequerimiento(), true)
     cerrarOrden()
