@@ -315,6 +315,8 @@ class TicketSerializer(
 
             "tipo_problema",
 
+            "prioridad",
+
             "criterio_tecnico",
 
 
@@ -510,6 +512,8 @@ class TicketSerializer(
             "especialistas_apoyo",
 
             "tipo_problema",
+
+            "prioridad",
 
             "criterio_tecnico",
 
@@ -1334,6 +1338,11 @@ class TicketSerializer(
         # CREAR
         # ==========================================================
 
+        if "categoria" not in validated_data or not validated_data["categoria"]:
+            validated_data["categoria"] = CategoriaTicket.objects.filter(activo=True).first()
+        if "area" not in validated_data or not validated_data["area"]:
+            from usuarios.models import Area
+            validated_data["area"] = Area.objects.filter(activo=True).first()
         prioridad = validated_data.pop("prioridad", None)
         sla_horas = None
         sla_fecha_limite = None
