@@ -1798,6 +1798,16 @@ class TicketViewSet(
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # REGLA 01: Límite de Caja Chica en requerimiento de componente
+        from django.conf import settings
+        limite_val = getattr(settings, 'SIA_LIMITE_CAJA_CHICA', 1000.0)
+        limite_cc = Decimal(str(limite_val))
+        if costo_estimado is not None and costo_estimado > limite_cc:
+            return Response(
+                {"costo_estimado": f"El monto del requerimiento (Bs {costo_estimado:.2f}) supera el límite máximo permitido de Caja Chica (Bs {limite_cc:.2f})."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
 
         ticket.requiere_compra = True
         ticket.cantidad_componente = cantidad

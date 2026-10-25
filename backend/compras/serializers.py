@@ -49,11 +49,13 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
 
     # --- REGLA 01: Validación de Límite de Caja Chica ---
     def validate_monto_estimado(self, value):
-        # Lee la variable SIA_LIMITE_CAJA_CHICA del .env (por defecto 1000)
-        limite = getattr(settings, 'SIA_LIMITE_CAJA_CHICA', 1000.0)
-        if value and value > limite:
+        from decimal import Decimal
+        # Lee la variable SIA_LIMITE_CAJA_CHICA dinámicamente desde settings (por defecto 1000.0)
+        limite_val = getattr(settings, 'SIA_LIMITE_CAJA_CHICA', 1000.0)
+        limite = Decimal(str(limite_val))
+        if value is not None and value > limite:
             raise serializers.ValidationError(
-                f"El monto de la compra (Bs {value:.2f}) supera el límite máximo permitido de Caja Chica (Bs {limite:.2f})."
+                f"El monto del requerimiento (Bs {value:.2f}) supera el límite máximo permitido de Caja Chica (Bs {limite:.2f})."
             )
         return value
 

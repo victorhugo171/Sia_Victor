@@ -408,6 +408,9 @@
                 step="0.01"
                 placeholder="Opcional"
               />
+              <div v-if="Number(form.monto_estimado) > 1000" class="error" style="margin-top:6px; font-size:12px;">
+                ⚠️ Advertencia: El monto estimado (Bs {{ Number(form.monto_estimado).toFixed(2) }}) supera el límite de Caja Chica (Bs. 1.000,00).
+              </div>
 
             </div>
 
@@ -983,9 +986,14 @@ async function guardar() {
 
       console.error(datos)
 
-      mensajeModal.value =
-        datos.detalle
+      const primerDetalle = (
+        datos.monto_estimado
+        || datos.costo_estimado
+        || datos.detalle
+        || (typeof datos === 'object' && datos !== null ? Object.values(datos)[0] : null)
         || 'Revise la información ingresada.'
+      )
+      mensajeModal.value = Array.isArray(primerDetalle) ? primerDetalle[0] : String(primerDetalle)
 
       return
     }
