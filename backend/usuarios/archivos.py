@@ -89,4 +89,23 @@ def archivo_expediente(request, ruta):
                 respuesta['Referrer-Policy'] = 'no-referrer'
                 respuesta['X-Frame-Options'] = 'SAMEORIGIN'
                 return respuesta
+    from soporte.models import CotizacionRequerimientoTicket
+    vista_tickets = TicketViewSet()
+    vista_tickets.request, vista_tickets.action = request, 'retrieve'
+    cotizacion = CotizacionRequerimientoTicket.objects.filter(
+        ticket__in=vista_tickets.get_queryset(),
+        documento=ruta,
+    ).first()
+    if cotizacion:
+        try:
+            stream = cotizacion.documento.open('rb')
+        except FileNotFoundError:
+            raise NotFound()
+        tipo = mimetypes.guess_type(cotizacion.documento.name)[0] or 'application/octet-stream'
+        respuesta = FileResponse(stream, content_type=tipo, as_attachment=tipo not in {'application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp'})
+        respuesta['Cache-Control'] = 'private, no-store'
+        respuesta['X-Content-Type-Options'] = 'nosniff'
+        respuesta['Referrer-Policy'] = 'no-referrer'
+        respuesta['X-Frame-Options'] = 'SAMEORIGIN'
+        return respuesta
     raise NotFound()
