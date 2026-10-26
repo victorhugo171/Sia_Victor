@@ -51,12 +51,12 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
 
     # --- REGLA 01: Validación de Límite de Caja Chica ---
     def validate_monto_estimado(self, value):
-        # Lee la variable SIA_LIMITE_CAJA_CHICA dinámicamente desde settings (por defecto 1000.0)
-        limite_val = getattr(settings, 'SIA_LIMITE_CAJA_CHICA', 1000.0)
+        # Lee el límite dinámicamente desde settings.
+        limite_val = settings.SIA_LIMITE_CAJA_CHICA
         limite = Decimal(str(limite_val))
         if value is not None and value > limite:
             raise serializers.ValidationError(
-                f"El monto de la compra (Bs {value:.2f}) supera el límite máximo permitido de Caja Chica (Bs {limite:.2f})."
+                f"El monto del requerimiento (Bs {value:.2f}) supera el límite máximo permitido de Caja Chica (Bs {limite:.2f})."
             )
         return value
 
@@ -233,11 +233,13 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
-        # === REGLA 02: Tres cotizaciones de proveedores distintos para compras > Bs 500 ===
+        # === REGLA 02: Cantidad configurada de cotizaciones sobre el umbral ===
         monto = attrs.get('monto_estimado')
         if monto is None and self.instance:
             monto = self.instance.monto_estimado
-        if monto and float(monto) > 500:
+        umbral_cotizaciones = Decimal(str(settings.SIA_UMBRAL_COTIZACIONES))
+        minimo_cotizaciones = int(settings.SIA_MIN_COTIZACIONES)
+        if monto is not None and Decimal(str(monto)) > umbral_cotizaciones:
             cotizaciones = attrs.get('cotizaciones')
             if cotizaciones is None:
                 cotizaciones = self.initial_data.get('cotizaciones')
@@ -245,10 +247,13 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
                 cotizaciones = list(self.instance.cotizaciones.all())
             cotizaciones = cotizaciones or []
 
-            # 1. Validar cantidad mínima de 3 cotizaciones
-            if len(cotizaciones) < 3:
+            # 1. Validar cantidad mínima de cotizaciones
+            if len(cotizaciones) < minimo_cotizaciones:
                 raise serializers.ValidationError({
-                    "cotizaciones": "Toda compra mayor a Bs 500.00 requiere adjuntar al menos 3 cotizaciones."
+                    "cotizaciones": (
+                        f"Toda compra mayor a Bs {umbral_cotizaciones:.2f} requiere "
+                        f"adjuntar al menos {minimo_cotizaciones} cotizaciones."
+                    )
                 })
 
             # 2. Validar que los proveedores sean distintos
@@ -258,9 +263,12 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
                 if prov:
                     proveedores.add(str(prov).strip().lower())
 
-            if len(proveedores) < 3:
+            if len(proveedores) < minimo_cotizaciones:
                 raise serializers.ValidationError({
-                    "cotizaciones": "Las 3 cotizaciones deben pertenecer a proveedores distintos."
+                    "cotizaciones": (
+                        f"Las {minimo_cotizaciones} cotizaciones deben pertenecer "
+                        "a proveedores distintos."
+                    )
                 })
 
         # BPMN: la solicitud viaja respaldada por Informe, Proforma y POA.
