@@ -1180,17 +1180,14 @@ async function crearTicket() {
        RESPUESTA
     ================================================ */
 
+    const cuerpoRespuesta = await respuesta.text()
     let datos = {}
-
-
-    try {
-
-      datos =
-        await respuesta.json()
-
-    } catch {
-
-      datos = {}
+    if (cuerpoRespuesta) {
+      try {
+        datos = JSON.parse(cuerpoRespuesta)
+      } catch {
+        datos = { respuesta_no_json: cuerpoRespuesta }
+      }
     }
 
 
@@ -1226,7 +1223,8 @@ async function crearTicket() {
 
       mostrarMensaje(
         obtenerError(
-          datos
+          datos,
+          respuesta.status
         ),
         true
       )
@@ -1294,7 +1292,8 @@ async function crearTicket() {
 ========================================================= */
 
 function obtenerError(
-  datos
+  datos,
+  statusHttp
 ) {
 
   if (
@@ -1333,9 +1332,25 @@ function obtenerError(
       )
       .join(' | ')
 
+  if (datos.respuesta_no_json) {
+    const texto = datos.respuesta_no_json
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    return texto
+      ? `El servidor respondió ${statusHttp}: ${texto.slice(0, 240)}`
+      : `El servidor respondió con error HTTP ${statusHttp}. Consulte el registro del backend.`
+  }
+
 
   return (
     errores
+    ||
+    (datos.non_field_errors || []).join(', ')
+    ||
+    (statusHttp >= 500
+      ? `El servidor respondió con error HTTP ${statusHttp}. Consulte el registro del backend.`
+      : '')
     ||
     'Revise la información ingresada.'
   )

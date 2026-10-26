@@ -1,3 +1,6 @@
+from rest_framework.views import APIView
+from django.conf import settings
+from django.db import models
 from usuarios.documentos import documentar, documentos_expediente, pdf_documento
 from rest_framework import (
     status,
@@ -155,6 +158,55 @@ def respuesta_sin_permiso(codigo_permiso):
 # ==========================================================
 # SOLICITUDES DE COMPRA
 # ==========================================================
+
+
+def calcular_saldo_caja_chica():
+    ahora = timezone.now()
+    fondo = Decimal(str(settings.SIA_FONDO_MENSUAL))
+    estados_comprometidos = [
+        "APROBADO_PARA_DESEMBOLSO",
+        "FONDOS_DESEMBOLSADOS",
+        "COMPRA_REGISTRADA",
+        "COMPRADO_Y_ENTREGADO",
+        "DESCARGO_PENDIENTE_LIQUIDACION",
+        "CERRADO_ARCHIVADO",
+    ]
+    compras_mes = SolicitudCompra.objects.filter(
+        via_adquisicion="CAJA_CHICA",
+        activo=True,
+        creado_en__year=ahora.year,
+        creado_en__month=ahora.month,
+    ).filter(
+        models.Q(estado__in=estados_comprometidos)
+        | models.Q(estado="VERIFICADO_PENDIENTE_AUTORIZACION")
+    )
+    total_gastado = Decimal("0.00")
+    for c in compras_mes:
+        monto = c.monto_real or c.monto_desembolsado or c.monto_estimado or Decimal("0.00")
+        total_gastado += monto
+
+    saldo_restante = fondo - total_gastado
+    return {
+        "fondo": float(fondo),
+        "total_gastado": float(total_gastado),
+        "saldo_restante": float(saldo_restante),
+        "fondo_decimal": fondo,
+        "total_gastado_decimal": total_gastado,
+        "saldo_restante_decimal": saldo_restante,
+    }
+
+
+class SaldoCajaChicaView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        info = calcular_saldo_caja_chica()
+        return Response({
+            "fondo": info["fondo"],
+            "total_gastado": info["total_gastado"],
+            "saldo_restante": info["saldo_restante"]
+        })
+
 
 class SolicitudCompraViewSet(
     viewsets.ModelViewSet
@@ -630,6 +682,7 @@ class SolicitudCompraViewSet(
         return self._transicion(request, solicitud, "CERTIFICAR_PRESUPUESTO", ["EVALUADO_PENDIENTE_CERTIFICACION"], "VERIFICADO_PENDIENTE_AUTORIZACION", "CERTIFICAR_PRESUPUESTO", "Certificación emitida; expediente derivado al Director para autorizar la compra.")
 
     @action(detail=True, methods=["post"], url_path="visto-bueno-director")
+    @transaction.atomic
     def visto_bueno_director(self, request, pk=None):
         # R08: Comprobar permiso básico de aprobación antes de resolver el objeto para garantizar 403 Forbidden a usuarios comunes
         es_jefe_admin = (
@@ -649,6 +702,7 @@ class SolicitudCompraViewSet(
             )
 
         solicitud = self.get_object()
+        solicitud = SolicitudCompra.objects.select_for_update().get(pk=solicitud.pk)
 
         # R08: Nadie puede aprobar su propia compra
         if solicitud.solicitante_id == request.user.id:
@@ -657,17 +711,36 @@ class SolicitudCompraViewSet(
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Si monto > 300 solo puede ser aprobada por Jefe administrativo
+        # El umbral de aprobaciÃ³n por Jefe administrativo se configura en settings.
         monto = solicitud.monto_estimado or Decimal("0.00")
-        if monto > 300:
+        umbral_aprobacion_jefe = Decimal(str(settings.SIA_UMBRAL_APROBACION_JEFE))
+        if monto > umbral_aprobacion_jefe:
             if not es_jefe_admin:
                 return Response(
-                    {"detalle": "Las compras mayores a Bs 300 solo pueden ser aprobadas por usuarios pertenecientes al grupo 'Jefe administrativo'."},
+                    {"detalle": f"Las compras mayores a Bs {umbral_aprobacion_jefe:.2f} solo pueden ser aprobadas por usuarios pertenecientes al grupo 'Jefe administrativo'."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        else:
+            if not (tiene_permiso_vb or es_jefe_admin or request.user.is_superuser):
+                return Response(
+                    {"detalle": "No tiene permiso para aprobar solicitudes de compra."},
                     status=status.HTTP_403_FORBIDDEN
                 )
 
-        if tiene_permiso_vb:
-            return self._transicion(request, solicitud, "DAR_VISTO_BUENO", ["VERIFICADO_PENDIENTE_AUTORIZACION"], "APROBADO_PARA_DESEMBOLSO", "VISTO_BUENO_DIRECTOR", "Aprobado; expediente derivado automáticamente a Tesorería para desembolso.")
+        # R09: No aprobar compras que dejen el saldo en negativo
+        info_saldo = calcular_saldo_caja_chica() if solicitud.via_adquisicion == "CAJA_CHICA" else None
+        if info_saldo and info_saldo["saldo_restante_decimal"] < monto:
+            return Response(
+                {
+                    "detalle": f"No se puede aprobar la compra. Fondos insuficientes en Caja Chica. Saldo restante: Bs {info_saldo['saldo_restante_decimal']:.2f}, Monto requerido: Bs {monto:.2f}."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Si el usuario es Jefe administrativo pero no tiene el permiso explícito en BD, omitir el chequeo interno en _transicion
+        permiso_check = "DAR_VISTO_BUENO" if tiene_permiso_vb else None
+        if permiso_check:
+            return self._transicion(request, solicitud, permiso_check, ["VERIFICADO_PENDIENTE_AUTORIZACION"], "APROBADO_PARA_DESEMBOLSO", "VISTO_BUENO_DIRECTOR", "Aprobado; expediente derivado automáticamente a Tesorería para desembolso.")
         else:
             if solicitud.cerrado_inmutable:
                 return Response({"detalle": "El expediente está cerrado y es inmutable."}, status=status.HTTP_409_CONFLICT)
