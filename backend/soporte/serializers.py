@@ -1,15 +1,19 @@
+from django.db import transaction
+from django.conf import settings
+from datetime import timedelta
 from usuarios.archivos import firmar_urls
 from django.utils import timezone
 
 from rest_framework import serializers
 
-from usuarios.models import Area
+from usuarios.models import Area, Usuario
 
 from .models import (
     CategoriaTicket,
     EstadoTicket,
     Ticket,
     NotificacionSoporte,
+    ESTADOS_TICKET_ACTIVOS_TECNICO,
 )
 
 
@@ -151,6 +155,45 @@ class TicketSerializer(
         required=False
     )
 
+    prioridad = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True
+    )
+
+    estado = serializers.PrimaryKeyRelatedField(
+        queryset=EstadoTicket.objects.all(),
+        required=False
+    )
+
+    solucion = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True
+    )
+
+    tecnico_asignado = serializers.PrimaryKeyRelatedField(
+        queryset=Usuario.objects.all(),
+        required=False,
+        allow_null=True
+    )
+
+    fecha_limite = serializers.DateTimeField(
+        source="sla_fecha_limite",
+        required=False,
+        allow_null=True
+    )
+
+    fecha_cierre = serializers.DateTimeField(
+        source="cerrado_en",
+        required=False,
+        allow_null=True
+    )
+
+    vencido = serializers.BooleanField(
+        read_only=True
+    )
+
 
     # ======================================================
     # EVIDENCIA
@@ -185,6 +228,7 @@ class TicketSerializer(
     cotizacion_archivo_url = (
         serializers.SerializerMethodField()
     )
+    cotizaciones_requerimiento = serializers.SerializerMethodField()
 
     evidencia_diagnostico_url = serializers.SerializerMethodField()
     evidencia_intervencion_url = serializers.SerializerMethodField()
@@ -299,6 +343,10 @@ class TicketSerializer(
             # ------------------------------------------------
 
             "estado",
+            "fecha_limite",
+            "fecha_cierre",
+            "vencido",
+            "solucion",
 
             "estado_nombre",
 
@@ -364,6 +412,7 @@ class TicketSerializer(
             "cotizacion_archivo", "informe_compra",
 
             "cotizacion_archivo_url",
+            "cotizaciones_requerimiento",
 
             "estado_compra_componente",
 
@@ -463,10 +512,6 @@ class TicketSerializer(
             "codigo",
 
             "solicitante",
-
-            "estado",
-
-            "tecnico_asignado",
 
             "especialistas_apoyo",
 
@@ -705,6 +750,16 @@ class TicketSerializer(
             else url
         )
 
+    def get_cotizaciones_requerimiento(self, obj):
+        return [
+            {
+                "id": cotizacion.pk,
+                "proveedor": cotizacion.proveedor,
+                "documento_url": self._archivo_url(cotizacion.documento),
+            }
+            for cotizacion in obj.cotizaciones_requerimiento.all()
+        ]
+
 
     # ======================================================
     # URL DEL ARCHIVO DE EVIDENCIA
@@ -764,6 +819,9 @@ class TicketSerializer(
         if not obj.sla_fecha_limite:
 
             return "SIN_SLA"
+
+        if obj.estado and obj.estado.codigo in ["RESUELTO", "CERRADO"]:
+            return "CUMPLIDO" if obj.sla_cumplido is True else "INCUMPLIDO" if obj.sla_cumplido is False else "CERRADO"
 
 
         # --------------------------------------------------
@@ -1038,6 +1096,74 @@ class TicketSerializer(
         )
 
 
+        # ==================================================
+        # REGLA 03: Prioridad alta automática por categoría
+        # ==================================================
+        cat = attrs.get('categoria')
+        if cat is None and self.instance:
+            cat = self.instance.categoria
+
+        cat_code = ""
+        if cat:
+            if hasattr(cat, 'codigo'):
+                cat_code = str(cat.codigo).upper()
+            elif isinstance(cat, (int, str)):
+                try:
+                    c_obj = CategoriaTicket.objects.get(id=cat) if str(cat).isdigit() else CategoriaTicket.objects.get(codigo__iexact=str(cat))
+                    cat_code = c_obj.codigo.upper()
+                except Exception:
+                    cat_code = str(cat).upper()
+
+        cat_name = str(getattr(cat, 'nombre', '')).strip().upper() if cat else ''
+        categorias_alta = {str(c).strip().upper() for c in settings.SIA_CATEGORIAS_PRIORIDAD_ALTA}
+        equipo_normalizado = equipo.strip().upper()
+        if (
+            cat_code in categorias_alta
+            or cat_name in categorias_alta
+            or equipo_normalizado in categorias_alta
+        ):
+            attrs['prioridad'] = 'ALTA'
+
+        # ==================================================
+        # REGLA 05: Flujo de estados controlado
+        # ==================================================
+        nuevo_estado = attrs.get('estado')
+        if self.instance and nuevo_estado and nuevo_estado != self.instance.estado:
+            est_origen = self.instance.estado.codigo if self.instance.estado else None
+            est_destino = nuevo_estado.codigo if hasattr(nuevo_estado, 'codigo') else str(nuevo_estado)
+
+            if est_origen != est_destino:
+                transiciones_validas = settings.SIA_TRANSICIONES_ESTADO
+                destinos_posibles = transiciones_validas.get(est_origen, [])
+                if est_destino not in destinos_posibles:
+                    raise serializers.ValidationError({
+                        "estado": f"Transición no permitida de {est_origen} a {est_destino}."
+                    })
+
+                # R05: EN_PROCESO -> RESUELTO requiere obligatorio un comentario/campo solucion
+                if est_destino == 'RESUELTO':
+                    sol = attrs.get('solucion') or getattr(self.instance, 'solucion', '') or attrs.get('diagnostico')
+                    if not sol or not str(sol).strip():
+                        raise serializers.ValidationError({
+                            "solucion": "Debe especificar la solución para resolver el ticket."
+                        })
+
+                # R06: CERRADO -> EN_PROCESO (Reapertura dentro de 7 días solo por el solicitante)
+                if est_origen == 'CERRADO' and est_destino == 'EN_PROCESO':
+                    request = self.context.get('request')
+                    if request and request.user != self.instance.solicitante:
+                        raise serializers.ValidationError({
+                            "detalle": "Solo el usuario solicitante puede reabrir el ticket."
+                        })
+                    fcierre = self.instance.fecha_cierre or self.instance.cerrado_en
+                    dias_reapertura = settings.SIA_DIAS_REAPERTURA
+                    if not fcierre:
+                        raise serializers.ValidationError({"detalle": "No se puede reabrir el ticket porque no tiene fecha de cierre registrada."})
+                    if (timezone.now() - fcierre).total_seconds() > dias_reapertura * 86400:
+                        raise serializers.ValidationError({
+                            "detalle": f"No se puede reabrir el ticket porque han pasado más de {dias_reapertura} días desde su cierre."
+                        })
+
         # --------------------------------------------------
         # VALIDACIONES
         # --------------------------------------------------
@@ -1096,7 +1222,52 @@ class TicketSerializer(
                 )
 
 
+        # ==================================================
+        # REGLA 07: Máximo 5 tickets activos por técnico
+        # ==================================================
+        tecnico = attrs.get('tecnico_asignado')
+        if tecnico and (not self.instance or tecnico.pk != self.instance.tecnico_asignado_id):
+            with transaction.atomic():
+                from usuarios.models import Usuario
+                Usuario.objects.select_for_update().get(pk=tecnico.pk)
+                activos_count = Ticket.objects.filter(
+                    tecnico_asignado=tecnico,
+                    estado__codigo__in=ESTADOS_TICKET_ACTIVOS_TECNICO
+                )
+                if self.instance and self.instance.pk:
+                    activos_count = activos_count.exclude(pk=self.instance.pk)
+                max_activos = settings.SIA_MAX_TICKETS_ACTIVOS_TECNICO
+                if activos_count.count() >= max_activos:
+                    raise serializers.ValidationError({
+                        "tecnico_asignado": f"El especialista ya tiene {activos_count.count()} tareas activas. El límite es {max_activos}; seleccione otro especialista."
+                    })
+
+        if self.instance and attrs.get("estado"):
+            destino = attrs["estado"].codigo
+            if destino == "CERRADO" and not self.instance.cerrado_en:
+                attrs["cerrado_en"] = timezone.now()
+
         return attrs
+
+    def update(self, instance, validated_data):
+        tecnico = validated_data.get("tecnico_asignado")
+        if not tecnico or tecnico.pk == instance.tecnico_asignado_id:
+            return super().update(instance, validated_data)
+
+        from usuarios.models import Usuario
+        max_activos = settings.SIA_MAX_TICKETS_ACTIVOS_TECNICO
+        with transaction.atomic():
+            Usuario.objects.select_for_update().get(pk=tecnico.pk)
+            activos = Ticket.objects.filter(
+                tecnico_asignado=tecnico,
+                estado__codigo__in=ESTADOS_TICKET_ACTIVOS_TECNICO,
+            ).exclude(pk=instance.pk)
+            cantidad_activos = activos.count()
+            if cantidad_activos >= max_activos:
+                raise serializers.ValidationError({
+                    "tecnico_asignado": f"El especialista ya tiene {cantidad_activos} tareas activas. El límite es {max_activos}; seleccione otro especialista."
+                })
+            return super().update(instance, validated_data)
 
 
     # ======================================================
@@ -1136,27 +1307,14 @@ class TicketSerializer(
         # ESTADO INICIAL
         # ==================================================
 
-        try:
-
-            estado_nuevo = (
-                EstadoTicket.objects
-                .get(
-                    codigo="NUEVO",
-                    activo=True
-                )
-            )
-
-
-        except EstadoTicket.DoesNotExist:
-
-            raise serializers.ValidationError(
-                {
-                    "estado": (
-                        "No existe el estado NUEVO "
-                        "activo en el sistema."
-                    )
-                }
-            )
+        estado_nuevo = (
+            EstadoTicket.objects.filter(codigo="NUEVO", activo=True).first()
+            or EstadoTicket.objects.filter(codigo="ABIERTO", activo=True).first()
+            or EstadoTicket.objects.filter(es_inicial=True, activo=True).first()
+            or EstadoTicket.objects.first()
+        )
+        if not estado_nuevo:
+            estado_nuevo = EstadoTicket.objects.create(codigo="NUEVO", nombre="Nuevo", es_inicial=True, activo=True)
 
 
         # ==================================================
@@ -1228,6 +1386,65 @@ class TicketSerializer(
         # CREAR
         # ==========================================================
 
+        if "categoria" not in validated_data or not validated_data["categoria"]:
+            validated_data["categoria"] = CategoriaTicket.objects.filter(activo=True).first()
+        if "area" not in validated_data or not validated_data["area"]:
+            from usuarios.models import Area
+            validated_data["area"] = Area.objects.filter(activo=True).first()
+        prioridad = validated_data.pop("prioridad", None)
+        sla_horas = None
+        sla_fecha_limite = None
+        if prioridad:
+            horas_map = settings.SIA_SLA_HORAS
+            sla_horas = horas_map.get(str(prioridad).upper(), 24)
+            try:
+                from zoneinfo import ZoneInfo
+                tz_lp = ZoneInfo("America/La_Paz")
+            except Exception:
+                import pytz
+                tz_lp = pytz.timezone("America/La_Paz")
+            ahora_lp = timezone.now().astimezone(tz_lp)
+            sla_fecha_limite = ahora_lp + timedelta(hours=sla_horas)
+
+        categoria = validated_data.get("categoria")
+        if categoria is None and self.instance:
+            categoria = self.instance.categoria
+        categorias_alta = {str(c).strip().upper() for c in settings.SIA_CATEGORIAS_PRIORIDAD_ALTA}
+        equipo_prioridad = str(validated_data.get("equipo_afectado", "")).strip().upper()
+        if categoria and (
+            str(categoria.codigo).strip().upper() in categorias_alta
+            or str(categoria.nombre).strip().upper() in categorias_alta
+        ) or equipo_prioridad in categorias_alta:
+            prioridad = "ALTA"
+            sla_horas = settings.SIA_SLA_HORAS["ALTA"]
+            try:
+                from zoneinfo import ZoneInfo
+                tz_lp = ZoneInfo("America/La_Paz")
+            except Exception:
+                import pytz
+                tz_lp = pytz.timezone("America/La_Paz")
+            sla_fecha_limite = timezone.now().astimezone(tz_lp) + timedelta(hours=sla_horas)
+
+        if prioridad == "ALTA" and sla_fecha_limite is None:
+            try:
+                from zoneinfo import ZoneInfo
+                tz_lp = ZoneInfo("America/La_Paz")
+            except Exception:
+                import pytz
+                tz_lp = pytz.timezone("America/La_Paz")
+            sla_horas = settings.SIA_SLA_HORAS["ALTA"]
+            sla_fecha_limite = timezone.now().astimezone(tz_lp) + timedelta(hours=sla_horas)
+
+        if prioridad and not sla_fecha_limite:
+            try:
+                from zoneinfo import ZoneInfo
+                tz_lp = ZoneInfo("America/La_Paz")
+            except Exception:
+                import pytz
+                tz_lp = pytz.timezone("America/La_Paz")
+            sla_horas = settings.SIA_SLA_HORAS.get(str(prioridad).upper(), settings.SIA_SLA_HORAS["MEDIA"])
+            sla_fecha_limite = timezone.now().astimezone(tz_lp) + timedelta(hours=sla_horas)
+
         ticket = (
             Ticket.objects.create(
 
@@ -1247,11 +1464,11 @@ class TicketSerializer(
                 #
                 # ==========================================
 
-                prioridad=None,
+                prioridad=prioridad,
 
-                sla_horas=None,
+                sla_horas=sla_horas,
 
-                sla_fecha_limite=None,
+                sla_fecha_limite=sla_fecha_limite,
 
                 sla_cumplido=None,
 

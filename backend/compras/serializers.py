@@ -1,11 +1,11 @@
-from usuarios.archivos import firmar_urls
+from decimal import Decimal
 from urllib.parse import urlsplit
 from django.conf import settings
-
 from rest_framework import serializers
-
-from .models import SolicitudCompra
 import re
+
+from usuarios.archivos import firmar_urls
+from .models import SolicitudCompra
 
 
 class MontoEstimadoField(serializers.DecimalField):
@@ -47,6 +47,18 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
         } if receptor else None
 
     monto_estimado = MontoEstimadoField(max_digits=12, decimal_places=2, min_value=0, required=False, allow_null=True)
+    cotizaciones = serializers.ListField(required=False, write_only=True)
+
+    # --- REGLA 01: Validación de Límite de Caja Chica ---
+    def validate_monto_estimado(self, value):
+        # Lee el límite dinámicamente desde settings.
+        limite_val = settings.SIA_LIMITE_CAJA_CHICA
+        limite = Decimal(str(limite_val))
+        if value is not None and value > limite:
+            raise serializers.ValidationError(
+                f"El monto del requerimiento (Bs {value:.2f}) supera el límite máximo permitido de Caja Chica (Bs {limite:.2f})."
+            )
+        return value
 
     # --- REGLA 01: Validación de Límite de Caja Chica ---
     def validate_monto_estimado(self, value):
@@ -96,46 +108,35 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
     )
 
     class Meta:
-
         model = SolicitudCompra
-
         fields = [
             "id",
             "codigo",
             "titulo",
             "descripcion",
-
             "solicitante",
             "solicitante_nombre", "receptor_acta",
             "solicitante_email",
-
             "area",
             "area_nombre",
-
             "tipo",
             "tipo_nombre",
-
             "cantidad",
             "especificaciones",
             "justificacion",
             "centro_costo",
-
             "monto_estimado",
-
+            "cotizaciones",
             "via_adquisicion",
             "via_nombre",
-
             "estado",
             "estado_nombre",
-
             "responsable_actual",
             "situacion",
-
             "origen_modulo",
             "ticket_soporte",
             "requerimiento_mantenimiento",
             "ticket_soporte_vinculado",
-
             "observaciones",
             "informe", "poa", "pedido", "proforma",
             "certificacion_presupuestaria",
@@ -152,9 +153,7 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
             "fecha_ingreso_almacen", "fecha_despacho_almacen",
             "fecha_entrega_solicitante", "acta_firmada_en", "solicitud_recibida_en",
             "cerrado_inmutable",
-
             "activo",
-
             "creado_en",
             "actualizado_en",
         ]
@@ -198,60 +197,46 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
     }
 
     def get_responsable_actual(self, obj):
-
         if obj.estado == "FONDOS_DESEMBOLSADOS":
             return "Compras y Almacén"
-
         return self.ETAPAS.get(obj.estado, ("", ""))[0]
 
     def get_situacion(self, obj):
         """Frase corta que explica en qué punto está el trámite."""
-
         if obj.estado == "FONDOS_DESEMBOLSADOS":
-
             if not obj.fondos_recibidos_en:
                 return "Fondos listos para retirar en Tesorería"
-
             if obj.gestion_estado:
                 texto = dict(SolicitudCompra.GESTIONES)[obj.gestion_estado]
                 return f"{texto}{f' — {obj.gestion_nota}' if obj.gestion_nota else ''}"
-
             return "Efectivo recibido — pendiente de realizar la compra"
 
         if obj.estado == "COMPRA_REGISTRADA":
-
             if not obj.fecha_ingreso_almacen:
                 return "Comprado — pendiente de registrar la entrada a almacén"
-
             if not obj.fecha_despacho_almacen:
                 return "En almacén — pendiente de registrar la salida"
-
             return "Salida registrada — pendiente de entregar con acta"
 
         return self.ETAPAS.get(obj.estado, ("", obj.get_estado_display()))[1]
 
     def to_representation(self, instance):
-
         data = super().to_representation(instance)
         # Metadato solicitado únicamente por la bandeja de Tesorería.
         if hasattr(instance, 'tesoreria_fecha'):
             data['tesoreria_fecha'] = instance.tesoreria_fecha.isoformat() if instance.tesoreria_fecha else None
 
         for campo in CAMPOS_ARCHIVO:
-
             valor = data.get(campo)
-
             if valor:
                 data[campo] = urlsplit(valor).path
 
         return firmar_urls(data, self.context.get('request'))
 
     def create(self, validated_data):
-
+        validated_data.pop('cotizaciones', None)
         request = self.context["request"]
-
         usuario = request.user
-
         return SolicitudCompra.objects.create(
             codigo=SolicitudCompra.generar_codigo(),
             solicitante=usuario,
@@ -260,6 +245,44 @@ class SolicitudCompraSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
+        # === REGLA 02: Cantidad configurada de cotizaciones sobre el umbral ===
+        monto = attrs.get('monto_estimado')
+        if monto is None and self.instance:
+            monto = self.instance.monto_estimado
+        umbral_cotizaciones = Decimal(str(settings.SIA_UMBRAL_COTIZACIONES))
+        minimo_cotizaciones = int(settings.SIA_MIN_COTIZACIONES)
+        if monto is not None and Decimal(str(monto)) > umbral_cotizaciones:
+            cotizaciones = attrs.get('cotizaciones')
+            if cotizaciones is None:
+                cotizaciones = self.initial_data.get('cotizaciones')
+            if cotizaciones is None and self.instance:
+                cotizaciones = list(self.instance.cotizaciones.all())
+            cotizaciones = cotizaciones or []
+
+            # 1. Validar cantidad mínima de cotizaciones
+            if len(cotizaciones) < minimo_cotizaciones:
+                raise serializers.ValidationError({
+                    "cotizaciones": (
+                        f"Toda compra mayor a Bs {umbral_cotizaciones:.2f} requiere "
+                        f"adjuntar al menos {minimo_cotizaciones} cotizaciones."
+                    )
+                })
+
+            # 2. Validar que los proveedores sean distintos
+            proveedores = set()
+            for cot in cotizaciones:
+                prov = cot.get('proveedor') if isinstance(cot, dict) else getattr(cot, 'proveedor', None)
+                if prov:
+                    proveedores.add(str(prov).strip().lower())
+
+            if len(proveedores) < minimo_cotizaciones:
+                raise serializers.ValidationError({
+                    "cotizaciones": (
+                        f"Las {minimo_cotizaciones} cotizaciones deben pertenecer "
+                        "a proveedores distintos."
+                    )
+                })
+
         # BPMN: la solicitud viaja respaldada por Informe, Proforma y POA.
         # El "pedido" se conserva como documento opcional del expediente.
         if self.instance is None:

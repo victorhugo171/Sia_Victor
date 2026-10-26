@@ -241,11 +241,13 @@ def _serializar_paginas(paginas, ticket):
 
 
 def informe_requerimiento(ticket):
+    cotizaciones = ticket.cotizaciones_requerimiento.all()
+    proveedores = ", ".join(c.proveedor for c in cotizaciones)
     return _documento_pdf("INFORME TÉCNICO DE REQUERIMIENTO", "Solicitud de componente, repuesto o insumo", ticket, [
         ("DATOS DEL REQUERIMIENTO", [("Asunto", ticket.titulo), ("Solicitante", _nombre(ticket.solicitante)), ("Ubicación", ticket.ubicacion), ("Equipo afectado", ticket.equipo_afectado)]),
         ("EVALUACIÓN TÉCNICA", [("Diagnóstico", ticket.diagnostico), ("Plan de solución", ticket.plan_solucion), ("Justificación", ticket.justificacion_compra)]),
     ], [("Código", ticket.codigo), ("Fecha de emisión", _fecha()), ("Técnico responsable", _nombre(ticket.tecnico_asignado)), ("Gestión", datetime.now().year)], [
-        ("Componente requerido", ticket.componente_requerido), ("Cantidad", ticket.cantidad_componente), ("Especificaciones técnicas", ticket.especificaciones_tecnicas), ("Proveedor de referencia", ticket.proveedor_cotizacion), ("Costo estimado", f"Bs. {_texto(ticket.costo_estimado)}"),
+        ("Componente requerido", ticket.componente_requerido), ("Cantidad", ticket.cantidad_componente), ("Especificaciones técnicas", ticket.especificaciones_tecnicas), ("Proveedor de referencia", ticket.proveedor_cotizacion), ("Proveedores con cotización adjunta", proveedores or ticket.proveedor_cotizacion), ("Costo estimado", f"Bs. {_texto(ticket.costo_estimado)}"),
     ])
 
 
