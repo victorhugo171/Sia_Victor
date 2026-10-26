@@ -935,6 +935,10 @@
 
               </select>
 
+              <small v-if="prioridadCategoriaAlta" class="categoria-prioridad-alta" role="status">
+                Prioridad ALTA asignada automáticamente por esta categoría.
+              </small>
+
             </div>
 
 
@@ -947,6 +951,7 @@
               <select
                 v-model="form.categoria"
                 required
+                @change="ajustarPrioridadCategoria"
               >
 
                 <option
@@ -1209,6 +1214,7 @@ import SolicitanteMenu
 
 import IconoSigta
   from '../components/IconoSigta.vue'
+import { reglas } from '../utils/reglas.js'
 
 
 const router =
@@ -1233,6 +1239,17 @@ const areas =
 
 const categorias =
   ref([])
+
+const prioridadCategoriaAlta = computed(() => {
+  const categoria = categorias.value.find(c => String(c.id) === String(form.categoria))
+  return reglas.categorias_prioridad_alta.includes(String(categoria?.codigo || '').trim().toUpperCase())
+})
+
+function ajustarPrioridadCategoria() {
+  if (prioridadCategoriaAlta.value && form.prioridad !== undefined) {
+    form.prioridad = 'ALTA'
+  }
+}
 
 
 // ==========================================================

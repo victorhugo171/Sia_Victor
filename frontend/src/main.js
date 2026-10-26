@@ -5,11 +5,16 @@ import { monto } from './utils/monto'
 import './assets/role-theme.css'
 import './assets/tema-sigta.css'
 import './assets/gestion-sia.css'
+import { cargarReglas } from './utils/reglas.js'
 import './utils/swal' // <-- INICIALIZACIÓN DE MODALES GLOBALES
 
-const app = createApp(App)
-app.directive('monto', monto)
+async function iniciarAplicacion() {
+  await cargarReglas()
 
-app.use(router)
+  const app = createApp(App)
+  app.directive('monto', monto)
+  app.use(router)
+  app.mount('#app')
+}
 
-app.mount('#app')
+iniciarAplicacion()
