@@ -150,6 +150,9 @@
                       <label class="campo">Costo estimado (Bs.)
                         <input v-monto inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" v-model="formComponente.costo_estimado" type="text" min="0" max="9999999999.99" step="0.01" class="full-select">
                       </label>
+                      <div v-if="reglas.cargado && Number(formComponente.costo_estimado) > reglas.limite_caja_chica" style="background:#fee2e2; border:1px solid #ef4444; color:#b91c1c; padding:8px 12px; border-radius:6px; margin:6px 0 10px 0; font-weight:600; font-size:12px;">
+                        ⚠️ Advertencia: El costo estimado de la cotización no debe superar el límite de Caja Chica (Bs. {{ Number(reglas.limite_caja_chica).toFixed(2) }}).
+                      </div>
                       <a v-if="ordenAbierta?.informe_compra" :href="ordenAbierta.informe_compra" target="_blank">Ver informe de requerimiento generado</a>
                       <label class="campo">Cotización (obligatoria)
                         <input type="file" accept="application/pdf,image/*" @change="onCotizacion" class="full-select">
@@ -225,6 +228,7 @@ import IconoSigta from '../components/IconoSigta.vue'
 import ExpedienteSolicitudModal from '../components/ExpedienteSolicitudModal.vue'
 import LogoutModal from '../components/LogoutModal.vue'
 import { useRouter } from 'vue-router'
+import { reglas } from '../utils/reglas.js'
 
 const router = useRouter()
 const usuario = ref(JSON.parse(localStorage.getItem('sigta_usuario') || '{}'))
