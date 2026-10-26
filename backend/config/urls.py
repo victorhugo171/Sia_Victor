@@ -1,3 +1,5 @@
+from .views_reglas import ReglasNegocioView
+from compras.views import SaldoCajaChicaView
 """
 URL configuration for config project.
 
@@ -21,6 +23,15 @@ from django.urls import (
 # ==========================================================
 
 urlpatterns = [
+    # ======================================================
+    # REGLAS DE NEGOCIO (ÚNICA FUENTE DE VERDAD)
+    # ======================================================
+
+    path(
+        "api/configuracion/reglas/",
+        ReglasNegocioView.as_view(),
+        name="configuracion-reglas"
+    ),
 
     # ======================================================
     # ADMINISTRACIÓN DJANGO
@@ -61,8 +72,14 @@ urlpatterns = [
     ),
 
     # ======================================================
-    # COMPRAS
+    # COMPRAS Y CAJA CHICA
     # ======================================================
+
+    path(
+        "api/caja-chica/saldo/",
+        SaldoCajaChicaView.as_view(),
+        name="caja-chica-saldo"
+    ),
 
     path(
         "api/compras/",
