@@ -408,6 +408,9 @@
                 step="0.01"
                 placeholder="Opcional"
               />
+              <div v-if="Number(form.monto_estimado) > reglas.limite_caja_chica" class="error" style="margin-top:6px; font-size:12px;">
+                ⚠️ Advertencia: El monto estimado (Bs {{ Number(form.monto_estimado).toFixed(2) }}) supera el límite de Caja Chica (Bs. {{ Number(reglas.limite_caja_chica).toFixed(2) }}).
+              </div>
 
             </div>
 
@@ -549,6 +552,7 @@
 
 <script setup>
 import { solicitarFirma } from '../utils/firma'
+import { reglas } from '../utils/reglas.js'
 import DocumentosExpediente from '../components/DocumentosExpediente.vue'
 import UsuarioHeader from '../components/UsuarioHeader.vue'
 import {
@@ -983,9 +987,14 @@ async function guardar() {
 
       console.error(datos)
 
-      mensajeModal.value =
-        datos.detalle
+      const primerDetalle = (
+        datos.monto_estimado
+        || datos.costo_estimado
+        || datos.detalle
+        || (typeof datos === 'object' && datos !== null ? Object.values(datos)[0] : null)
         || 'Revise la información ingresada.'
+      )
+      mensajeModal.value = Array.isArray(primerDetalle) ? primerDetalle[0] : String(primerDetalle)
 
       return
     }

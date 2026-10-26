@@ -31,7 +31,12 @@
           <div class="section-title"><b>3</b><div><h2>Cantidad y presupuesto estimado</h2><p>Indique las cantidades requeridas y el costo aproximado de la adquisición.</p></div></div>
           <div class="fields two">
             <label>Cantidad <em>*</em><input v-model.number="form.cantidad" type="number" min="1" required></label>
-            <label>Monto estimado (Bs)<input v-monto inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" v-model="form.monto_estimado" type="text" min="0" step="0.01" placeholder="Ej.: 850.00"></label>
+            <label>Monto estimado (Bs)
+              <input v-monto inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" v-model="form.monto_estimado" type="text" min="0" step="0.01" placeholder="Ej.: 850.00">
+              <span v-if="Number(form.monto_estimado) > reglas.limite_caja_chica" style="color:var(--sigta-error); font-weight:bold; font-size:11px; display:block; margin-top:4px;">
+                ⚠️ Advertencia: El monto supera el límite de Caja Chica (Bs {{ Number(reglas.limite_caja_chica).toFixed(2) }}).
+              </span>
+            </label>
             <label>Centro de costo<input v-model="form.centro_costo" placeholder="Opcional"></label>
             <label>Ticket de soporte vinculado<input v-model="form.ticket_soporte_vinculado" placeholder="Ej.: SOP-2026-0002"></label>
           </div>
@@ -64,6 +69,7 @@ import UsuarioHeader from '../components/UsuarioHeader.vue'
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import SolicitanteMenu from '../components/SolicitanteMenu.vue'
+import { reglas } from '../utils/reglas.js'
 const router=useRouter(),areas=ref([]),guardando=ref(false),mensaje=ref('')
 const form=reactive({titulo:'',descripcion:'',area:'',tipo:'',cantidad:1,monto_estimado:'',centro_costo:'',ticket_soporte_vinculado:'',especificaciones:'',justificacion:''})
 const archivos=reactive({informe:null,poa:null,pedido:null,proforma:null})
@@ -71,7 +77,7 @@ const documentos=[{campo:'informe',nombre:'Informe'},{campo:'poa',nombre:'POA'},
 const token=()=>localStorage.getItem('sigta_token')
 function seleccionar(campo,e){archivos[campo]=e.target.files?.[0]||null}
 async function cargarAreas(){try{const r=await fetch('/api/usuarios/areas/',{headers:{Authorization:`Token ${token()}`}});const d=await r.json();areas.value=Array.isArray(d)?d:(d.results||[])}catch{mensaje.value='No fue posible cargar las áreas.'}}
-async function guardar(){guardando.value=true;mensaje.value='';try{const d=new FormData();Object.entries(form).forEach(([k,v])=>{if(v!==''&&v!==null)d.append(k,String(v))});Object.entries(archivos).forEach(([k,v])=>{if(v)d.append(k,v)});const r=await fetch('/api/compras/solicitudes/',{method:'POST',headers:{Authorization:`Token ${token()}`},body:d});const data=await r.json();if(!r.ok)throw new Error(data.detalle||data.documentos?.[0]||data.documentos||'Revise la información ingresada.');router.push('/usuario/mis-solicitudes')}catch(e){mensaje.value=e.message}finally{guardando.value=false}}
+async function guardar(){guardando.value=true;mensaje.value='';try{const d=new FormData();Object.entries(form).forEach(([k,v])=>{if(v!==''&&v!==null)d.append(k,String(v))});Object.entries(archivos).forEach(([k,v])=>{if(v)d.append(k,v)});const r=await fetch('/api/compras/solicitudes/',{method:'POST',headers:{Authorization:`Token ${token()}`},body:d});const data=await r.json();if(!r.ok){const err=data.monto_estimado||data.costo_estimado||data.detalle||data.documentos?.[0]||data.documentos||(typeof data==='object'&&data!==null?Object.values(data)[0]:null)||'Revise la información ingresada.';throw new Error(Array.isArray(err)?err[0]:String(err));}router.push('/usuario/mis-solicitudes')}catch(e){mensaje.value=e.message}finally{guardando.value=false}}
 onMounted(cargarAreas)
 </script>
 

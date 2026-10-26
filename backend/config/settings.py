@@ -193,6 +193,27 @@ PASSWORD_HASHERS = [
 # VALIDACIÓN DE CONTRASEÑAS
 # ==========================================================
 
+# ==========================================================
+# CONFIGURACIÓN SIA - REGLAS DE NEGOCIO (CAJA CHICA)
+# ==========================================================
+
+SIA_LIMITE_CAJA_CHICA = float(os.environ.get('SIA_LIMITE_CAJA_CHICA', '1000.0'))
+
+# Reglas de negocio configurables para compras y soporte.
+SIA_UMBRAL_COTIZACIONES = float(os.environ.get('SIA_UMBRAL_COTIZACIONES', '500.0'))
+SIA_MIN_COTIZACIONES = int(os.environ.get('SIA_MIN_COTIZACIONES', '3'))
+SIA_CATEGORIAS_PRIORIDAD_ALTA = ['RED', 'SERVIDORES']
+SIA_SLA_HORAS = {
+    'ALTA': int(os.environ.get('SIA_SLA_ALTA', '4')),
+    'MEDIA': int(os.environ.get('SIA_SLA_MEDIA', '24')),
+    'BAJA': int(os.environ.get('SIA_SLA_BAJA', '72')),
+}
+SIA_DIAS_REAPERTURA = int(os.environ.get('SIA_DIAS_REAPERTURA', '7'))
+SIA_MAX_TICKETS_ACTIVOS_TECNICO = int(os.environ.get('SIA_MAX_TICKETS_ACTIVOS_TECNICO', '5'))
+SIA_UMBRAL_APROBACION_JEFE = float(os.environ.get('SIA_UMBRAL_APROBACION_JEFE', '300.0'))
+SIA_FONDO_MENSUAL = float(os.environ.get('SIA_FONDO_MENSUAL', '5000.0'))
+SIA_MIN_PASSWORD_LENGTH = int(os.environ.get('SIA_MIN_PASSWORD_LENGTH', '10'))
+
 AUTH_PASSWORD_VALIDATORS = [
 
     {
@@ -206,7 +227,7 @@ AUTH_PASSWORD_VALIDATORS = [
             'django.contrib.auth.password_validation.'
             'MinimumLengthValidator',
         'OPTIONS': {
-            'min_length': 8,
+            'min_length': SIA_MIN_PASSWORD_LENGTH,
         },
     },
 

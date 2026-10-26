@@ -256,13 +256,13 @@
                   </div>
 
                   <div
-                    v-if="ticket.sla_horas"
+                    v-if="ticket.vencido || ticket.sla_horas"
                     :class="[
                       'sla-badge',
-                      claseSla(ticket.sla_estado)
+                      ticket.vencido ? 'sla-vencido' : claseSla(ticket.sla_estado)
                     ]"
                   >
-                    {{ textoSla(ticket) }}
+                    {{ ticket.vencido ? 'Vencido' : textoSla(ticket) }}
                   </div>
 
                   <h3>
@@ -811,7 +811,7 @@
           ================================================== -->
 
           <div
-            v-if="estadoActual === 'NUEVO'"
+            v-if="['NUEVO', 'ABIERTO'].includes(estadoActual)"
             class="action-card"
           >
 
@@ -903,6 +903,7 @@
 
                 <select
                   v-model="formClasificacion.prioridad"
+                  :disabled="esPrioridadBloqueada"
                 >
                   <option value="">
                     Seleccione prioridad
@@ -1027,11 +1028,12 @@
                   v-for="usuario in especialistas"
                   :key="usuario.id"
                   :value="usuario.id"
+                  :disabled="cargaTecnico(usuario.id) >= MAX_TICKETS_ACTIVOS"
                 >
                   {{
                     usuario.nombre_completo
                     || usuario.email
-                  }}
+                  }} · {{ cargaTecnico(usuario.id) }}/{{ MAX_TICKETS_ACTIVOS }} tareas activas{{ cargaTecnico(usuario.id) >= MAX_TICKETS_ACTIVOS ? ' · Límite alcanzado' : '' }}
                 </option>
               </select>
 
@@ -1050,6 +1052,7 @@
               :disabled="
                 procesando
                 || !formAsignacion.tecnico_id
+                || cargaTecnico(formAsignacion.tecnico_id) >= MAX_TICKETS_ACTIVOS
               "
               @click="designarEspecialista"
             >
@@ -1588,6 +1591,21 @@ const formClasificacion = reactive({
   criterio_tecnico: '',
 })
 
+const esPrioridadBloqueada = computed(() => {
+  const cat = ticketSeleccionado.value?.categoria_codigo || ticketSeleccionado.value?.categoria?.codigo || ''
+  return ['RED', 'SERVIDORES'].includes(String(cat).toUpperCase())
+})
+
+watch(
+  () => [ticketSeleccionado.value, esPrioridadBloqueada.value],
+  ([ticket, bloqueada]) => {
+    if (bloqueada) {
+      formClasificacion.prioridad = 'ALTA'
+    }
+  },
+  { immediate: true }
+)
+
 const formAsignacion = reactive({
   tecnico_id: '',
 })
@@ -1972,6 +1990,14 @@ const especialistas =
     )
   })
 
+const MAX_TICKETS_ACTIVOS = 5
+const ESTADOS_CARGA_TECNICO = ['ABIERTO','EN_PROCESO','EN_ANALISIS','ASIGNADO','EN_DIAGNOSTICO','EN_EJECUCION','EN_VERIFICACION','PENDIENTE_CONFORMIDAD','PENDIENTE_INFORME_FINAL']
+
+function cargaTecnico(id) {
+  return tickets.value.filter(ticket => Number(ticket.tecnico_asignado) === Number(id)
+    && ESTADOS_CARGA_TECNICO.includes(estadoTicket(ticket))).length
+}
+
 
 // ==========================================================
 // ESTADO
@@ -2011,12 +2037,11 @@ function ticketsPorColumna(
   columna
 ) {
 
-  return tickets.value.filter(
-    ticket =>
-      estadoTicket(ticket)
-      ===
-      columna.codigo
-  )
+  return tickets.value.filter(ticket => {
+    const estado = estadoTicket(ticket)
+    return estado === columna.codigo
+      || (columna.codigo === 'NUEVO' && estado === 'ABIERTO')
+  })
 }
 
 
@@ -2024,12 +2049,10 @@ function contar(
   codigo
 ) {
 
-  return tickets.value.filter(
-    ticket =>
-      estadoTicket(ticket)
-      ===
-      codigo
-  ).length
+  return tickets.value.filter(ticket => {
+    const estado = estadoTicket(ticket)
+    return estado === codigo || (codigo === 'NUEVO' && estado === 'ABIERTO')
+  }).length
 }
 
 
@@ -2138,9 +2161,9 @@ const slaPreview =
 
     const valores = {
       CRITICA: '4 horas',
-      ALTA: '8 horas',
+      ALTA: '4 horas',
       MEDIA: '24 horas',
-      BAJA: '48 horas',
+      BAJA: '72 horas',
     }
 
 

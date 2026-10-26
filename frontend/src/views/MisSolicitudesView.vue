@@ -935,6 +935,10 @@
 
               </select>
 
+              <small v-if="prioridadCategoriaAlta" class="categoria-prioridad-alta" role="status">
+                Prioridad ALTA asignada automáticamente por esta categoría.
+              </small>
+
             </div>
 
 
@@ -947,6 +951,7 @@
               <select
                 v-model="form.categoria"
                 required
+                @change="ajustarPrioridadCategoria"
               >
 
                 <option
@@ -1233,6 +1238,17 @@ const areas =
 
 const categorias =
   ref([])
+
+const prioridadCategoriaAlta = computed(() => {
+  const categoria = categorias.value.find(c => String(c.id) === String(form.categoria))
+  return ['RED', 'SERVIDORES'].includes(String(categoria?.codigo || '').toUpperCase())
+})
+
+function ajustarPrioridadCategoria() {
+  if (prioridadCategoriaAlta.value && form.prioridad !== undefined) {
+    form.prioridad = 'ALTA'
+  }
+}
 
 
 // ==========================================================

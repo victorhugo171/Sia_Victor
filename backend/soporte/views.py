@@ -2,6 +2,8 @@ from usuarios.documentos import documentar, documentos_expediente, pdf_documento
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
+from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from django.core.files.base import ContentFile
 
@@ -42,6 +44,8 @@ from .models import (
     EstadoTicket,
     Ticket,
     NotificacionSoporte,
+    CotizacionRequerimientoTicket,
+    ESTADOS_TICKET_ACTIVOS_TECNICO,
 )
 
 from .serializers import (
@@ -67,6 +71,55 @@ ROLES_ADMIN = {
 def crear_notificacion(destinatario, ticket, tipo, titulo, mensaje):
     if destinatario:
         NotificacionSoporte.objects.create(destinatario=destinatario, ticket=ticket, tipo=tipo, titulo=titulo, mensaje=mensaje)
+
+
+def _datos_cotizaciones_requerimiento(request):
+    archivos = request.FILES.getlist("cotizacion_archivos")
+    proveedores = request.data.getlist("proveedores_cotizacion") if hasattr(request.data, "getlist") else []
+    if not archivos and request.FILES.get("cotizacion_archivo"):
+        archivos = [request.FILES["cotizacion_archivo"]]
+        proveedores = [request.data.get("proveedor_cotizacion", "")]
+    return [(str(proveedores[i] if i < len(proveedores) else "").strip(), archivo) for i, archivo in enumerate(archivos)]
+
+
+def _guardar_cotizaciones_requerimiento(ticket, datos):
+    for proveedor, archivo in datos:
+        CotizacionRequerimientoTicket.objects.filter(
+            ticket=ticket,
+            proveedor__iexact=proveedor,
+        ).delete()
+        CotizacionRequerimientoTicket.objects.create(
+            ticket=ticket,
+            proveedor=proveedor,
+            documento=archivo,
+        )
+
+
+def _migrar_cotizacion_legacy(ticket):
+    if ticket.cotizaciones_requerimiento.exists() or not ticket.cotizacion_archivo:
+        return
+    CotizacionRequerimientoTicket.objects.create(
+        ticket=ticket,
+        proveedor=ticket.proveedor_cotizacion.strip(),
+        documento=ticket.cotizacion_archivo.name,
+    )
+
+
+def _error_regla_02_ticket(ticket):
+    if ticket.costo_estimado is None or ticket.costo_estimado <= Decimal("500.00"):
+        return None
+    cotizaciones = list(ticket.cotizaciones_requerimiento.all())
+    if not cotizaciones and ticket.cotizacion_archivo:
+        cotizaciones = [ticket]
+    if len(cotizaciones) < 3:
+        return "Los requerimientos mayores a Bs 500.00 requieren al menos 3 cotizaciones adjuntas."
+    proveedores = {
+        str(c.proveedor if c is not ticket else ticket.proveedor_cotizacion).strip().casefold()
+        for c in cotizaciones
+    }
+    if "" in proveedores or len(proveedores) < 3:
+        return "Las cotizaciones deben corresponder a 3 proveedores distintos."
+    return None
 
 
 class NotificacionSoporteViewSet(viewsets.ReadOnlyModelViewSet):
@@ -137,9 +190,9 @@ def _categoria_por_defecto():
 
 SLA_POR_PRIORIDAD = {
     "CRITICA": 4,
-    "ALTA": 8,
+    "ALTA": 4,
     "MEDIA": 24,
-    "BAJA": 48,
+    "BAJA": 72,
 }
 
 
@@ -449,6 +502,58 @@ class TicketViewSet(
     @action(detail=True, methods=['get'], url_path=r'documentos/(?P<documento_id>[0-9]+)/pdf')
     def documento_pdf(self, request, pk=None, documento_id=None):
         return pdf_documento(self, request, pk, documento_id)
+
+    @action(detail=True, methods=["post"], url_path="cambiar-estado")
+    def cambiar_estado(self, request, pk=None):
+        ticket = self.get_object()
+        nuevo_cod = request.data.get("estado") or request.data.get("nuevo_estado")
+        if not nuevo_cod:
+            return Response({"detalle": "Debe especificar el nuevo estado."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            nuevo_estado = EstadoTicket.objects.get(codigo=nuevo_cod.upper())
+        except EstadoTicket.DoesNotExist:
+            return Response({"detalle": f"Estado '{nuevo_cod}' no existe."}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = {"estado": nuevo_estado.id}
+        if "solucion" in request.data:
+            data["solucion"] = request.data["solucion"]
+        serializer = self.get_serializer(ticket, data=data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], url_path="reabrir")
+    def reabrir(self, request, pk=None):
+        ticket = self.get_object()
+        # R06: Solo el solicitante puede reabrir
+        if ticket.solicitante_id != request.user.id:
+            return Response(
+                {"detalle": "Solo el usuario solicitante puede reabrir el ticket."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        # R06: Estado debe ser CERRADO
+        if not ticket.estado or ticket.estado.codigo != "CERRADO":
+            return Response(
+                {"detalle": "Solo se pueden reabrir tickets cerrados."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        # R06: Dentro de 7 días posteriores a fecha_cierre
+        fcierre = ticket.fecha_cierre or ticket.cerrado_en
+        dias = getattr(settings, "SIA_DIAS_REAPERTURA", 7)
+        if not fcierre:
+            return Response({"detalle": "No se puede reabrir el ticket porque no tiene fecha de cierre registrada."}, status=status.HTTP_400_BAD_REQUEST)
+        if (timezone.now() - fcierre).total_seconds() > dias * 86400:
+            return Response(
+                {"detalle": f"No se puede reabrir el ticket porque han pasado más de {dias} días desde su cierre."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            estado_proc = EstadoTicket.objects.get(codigo="EN_PROCESO")
+        except EstadoTicket.DoesNotExist:
+            estado_proc = EstadoTicket.objects.create(codigo="EN_PROCESO", nombre="En proceso")
+        ticket.estado = estado_proc
+        ticket.save(update_fields=["estado"])
+        return Response(self.get_serializer(ticket).data)
 
     serializer_class = (
         TicketSerializer
@@ -863,13 +968,13 @@ class TicketViewSet(
 
         if not validar_estado_ticket(
             ticket,
-            ["NUEVO"]
+            ["NUEVO", "ABIERTO"]
         ):
 
             return Response(
                 {
                     "detalle": (
-                        "Solo los tickets NUEVOS "
+                        "Solo los tickets NUEVOS o ABIERTOS "
                         "pueden recibirse y validarse."
                     )
                 },
@@ -1052,6 +1157,22 @@ class TicketViewSet(
             .upper()
         )
 
+        categorias_alta = {
+            str(c).strip().upper()
+            for c in getattr(settings, "SIA_CATEGORIAS_PRIORIDAD_ALTA", ["RED", "SERVIDORES"])
+        }
+        categorias_alta.update({"REDES", "SERVIDOR"})
+        equipo = str(ticket.equipo_afectado or "").strip().upper()
+        categoria_codigo = str(ticket.categoria.codigo if ticket.categoria else "").strip().upper()
+        categoria_nombre = str(ticket.categoria.nombre if ticket.categoria else "").strip().upper()
+        prioridad_alta_obligatoria = (
+            categoria_codigo in categorias_alta
+            or categoria_nombre in categorias_alta
+            or equipo in categorias_alta
+        )
+        if prioridad_alta_obligatoria:
+            prioridad = "ALTA"
+
 
         if prioridad not in SLA_POR_PRIORIDAD:
 
@@ -1092,7 +1213,7 @@ class TicketViewSet(
             )
 
 
-        ahora = timezone.now()
+        ahora = timezone.localtime()
 
         horas_sla = (
             SLA_POR_PRIORIDAD[
@@ -1101,8 +1222,14 @@ class TicketViewSet(
         )
 
 
+        try:
+            from zoneinfo import ZoneInfo
+            tz_la_paz = ZoneInfo("America/La_Paz")
+        except ImportError:
+            import pytz
+            tz_la_paz = pytz.timezone("America/La_Paz")
         fecha_limite = (
-            ahora
+            ahora.astimezone(tz_la_paz)
             +
             timedelta(
                 hours=horas_sla
@@ -1177,6 +1304,7 @@ class TicketViewSet(
         methods=["post"],
         url_path="designar-revision"
     )
+    @transaction.atomic
     def designar_revision(
         self,
         request,
@@ -1294,6 +1422,20 @@ class TicketViewSet(
                 status=
                     status.HTTP_400_BAD_REQUEST
             )
+
+        # REGLA 07: Máximo 5 tickets activos por técnico
+        with transaction.atomic():
+            Usuario.objects.select_for_update().get(pk=tecnico.pk)
+            activos = Ticket.objects.filter(
+                tecnico_asignado=tecnico,
+                estado__codigo__in=ESTADOS_TICKET_ACTIVOS_TECNICO
+            ).exclude(pk=ticket.pk)
+            max_activos = getattr(settings, "SIA_MAX_TICKETS_ACTIVOS_TECNICO", 5)
+            if activos.count() >= max_activos:
+                return Response(
+                    {"tecnico_id": f"El especialista ya tiene {activos.count()} tareas activas. El límite es {max_activos}; seleccione otro especialista."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
 
         estado_asignado = obtener_estado(
@@ -1647,12 +1789,19 @@ class TicketViewSet(
                 status=status.HTTP_409_CONFLICT,
             )
 
+        _migrar_cotizacion_legacy(ticket)
         ticket.requiere_compra = True
         ticket.estado_compra_componente = "BORRADOR"
         ticket.componente_requerido = str(request.data.get("componente_requerido", "")).strip()
         ticket.especificaciones_tecnicas = str(request.data.get("especificaciones_tecnicas", "")).strip()
         ticket.justificacion_compra = str(request.data.get("justificacion_compra", "")).strip()
-        ticket.proveedor_cotizacion = str(request.data.get("proveedor_cotizacion", "")).strip()
+        datos_cotizaciones = _datos_cotizaciones_requerimiento(request)
+        if any(not proveedor for proveedor, _ in datos_cotizaciones):
+            return Response({"proveedores_cotizacion": "Indique el proveedor correspondiente a cada cotización adjunta."}, status=status.HTTP_400_BAD_REQUEST)
+        if datos_cotizaciones:
+            ticket.proveedor_cotizacion = datos_cotizaciones[0][0]
+        else:
+            ticket.proveedor_cotizacion = str(request.data.get("proveedor_cotizacion", "")).strip()
         try:
             ticket.cantidad_componente = max(1, int(request.data.get("cantidad_componente") or 1))
             costo = request.data.get("costo_estimado")
@@ -1664,6 +1813,9 @@ class TicketViewSet(
         cotizacion = request.FILES.get("cotizacion_archivo")
         if cotizacion:
             ticket.cotizacion_archivo = cotizacion
+        elif datos_cotizaciones:
+            ticket.cotizacion_archivo = datos_cotizaciones[0][1]
+        _guardar_cotizaciones_requerimiento(ticket, datos_cotizaciones)
         ticket.save(update_fields=[
             "requiere_compra", "estado_compra_componente", "componente_requerido",
             "especificaciones_tecnicas", "justificacion_compra", "proveedor_cotizacion",
@@ -1747,6 +1899,7 @@ class TicketViewSet(
             )
 
 
+        _migrar_cotizacion_legacy(ticket)
         componente = str(request.data.get("componente_requerido", "")).strip()
         especificaciones = str(request.data.get("especificaciones_tecnicas", "")).strip()
         justificacion = str(request.data.get("justificacion_compra", "")).strip()
@@ -1798,6 +1951,45 @@ class TicketViewSet(
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # REGLA 01: Límite de Caja Chica en requerimiento de componente
+        from django.conf import settings
+        limite_val = getattr(settings, 'SIA_LIMITE_CAJA_CHICA', 1000.0)
+        limite_cc = Decimal(str(limite_val))
+        if costo_estimado is not None and costo_estimado > limite_cc:
+            return Response(
+                {"costo_estimado": f"El monto del requerimiento (Bs {costo_estimado:.2f}) supera el límite máximo permitido de Caja Chica (Bs {limite_cc:.2f})."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        datos_cotizaciones = _datos_cotizaciones_requerimiento(request)
+        if any(not proveedor for proveedor, _ in datos_cotizaciones):
+            return Response(
+                {"proveedores_cotizacion": "Indique el proveedor correspondiente a cada cotización adjunta."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        cotizaciones_existentes = list(ticket.cotizaciones_requerimiento.all())
+        cotizaciones_validables = [(c.proveedor, c.documento) for c in cotizaciones_existentes]
+        if not cotizaciones_existentes and ticket.cotizacion_archivo:
+            cotizaciones_validables.append((ticket.proveedor_cotizacion, ticket.cotizacion_archivo))
+        cotizaciones_validables.extend(datos_cotizaciones)
+        if costo_estimado is not None and costo_estimado > Decimal("500.00"):
+            proveedores_distintos = {proveedor.strip().casefold() for proveedor, _ in cotizaciones_validables if proveedor.strip()}
+            if len(cotizaciones_validables) < 3:
+                return Response(
+                    {"cotizaciones": "Los requerimientos mayores a Bs 500.00 requieren adjuntar al menos 3 cotizaciones."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if len(proveedores_distintos) < 3:
+                return Response(
+                    {"cotizaciones": "Las cotizaciones deben corresponder a proveedores distintos; registre 3 proveedores diferentes."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif not cotizaciones_validables:
+            return Response(
+                {"cotizaciones": "Adjunte al menos una cotización antes de enviar a jefatura."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
 
         ticket.requiere_compra = True
         ticket.cantidad_componente = cantidad
@@ -1807,6 +1999,9 @@ class TicketViewSet(
         ticket.proveedor_cotizacion = proveedor
         ticket.costo_estimado = costo_estimado
         cotizacion_compra = request.FILES.get("cotizacion_archivo") or ticket.cotizacion_archivo
+        if datos_cotizaciones:
+            cotizacion_compra = datos_cotizaciones[0][1]
+            ticket.proveedor_cotizacion = datos_cotizaciones[0][0]
         if not cotizacion_compra:
             return Response({"detalle": "Adjunte la cotización antes de enviar a jefatura."}, status=400)
         ticket.informe_compra.save(
@@ -1821,6 +2016,9 @@ class TicketViewSet(
 
         if cotizacion:
             ticket.cotizacion_archivo = cotizacion
+        elif datos_cotizaciones:
+            ticket.cotizacion_archivo = datos_cotizaciones[0][1]
+        _guardar_cotizaciones_requerimiento(ticket, datos_cotizaciones)
 
         ticket.save(
             update_fields=[
@@ -1891,6 +2089,9 @@ class TicketViewSet(
         ticket = self.get_object()
         if ticket.estado_compra_componente != "SOLICITADA" or ticket.codigo_compra_vinculada:
             return Response({"detalle": "La compra no está pendiente de validación."}, status=400)
+        error_cotizaciones = _error_regla_02_ticket(ticket)
+        if error_cotizaciones:
+            return Response({"cotizaciones": error_cotizaciones}, status=status.HTTP_400_BAD_REQUEST)
         from compras.informes_origen import asegurar_informe_tecnico
         asegurar_informe_tecnico(ticket)
         if not ticket.cotizacion_archivo:
@@ -1947,6 +2148,12 @@ class TicketViewSet(
                 {"viable": "Debe indicar True o False."},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+
+        if viable is True:
+            error_cotizaciones = _error_regla_02_ticket(ticket)
+            if error_cotizaciones:
+                return Response({"cotizaciones": error_cotizaciones}, status=status.HTTP_400_BAD_REQUEST)
 
 
         # --------------------------------------------------
