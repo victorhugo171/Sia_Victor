@@ -27,11 +27,13 @@ def datos_entrega(data):
 
 def pdf_recibo(datos):
     from types import SimpleNamespace
+    from .views import calcular_saldo_caja_chica
+    saldo = calcular_saldo_caja_chica()["saldo_restante_decimal"] - Decimal(str(datos["monto"]))
     return _documento_pdf(
         'RECIBO DE ENTREGA DE FONDOS', 'Caja Chica - constancia para impresión y firma',
         SimpleNamespace(codigo=datos['codigo']),
         [('REQUERIMIENTO', [('Objeto de la compra', datos['titulo']), ('Área solicitante', datos['area']), ('Solicitante', datos['solicitante'])]),
-         ('ENTREGA DE FONDOS', [('Importe entregado', f"Bs. {datos['monto']}"), ('Método de desembolso', datos['metodo']), ('Nombre completo de quien recibe', datos['recibe']), ('Nombre completo de quien entrega', datos['entrega'])]),
+         ('ENTREGA DE FONDOS', [('Importe entregado', f"Bs. {datos['monto']}"), ('Saldo mensual restante después de esta entrega', f"Bs. {saldo:.2f}"), ('Método de desembolso', datos['metodo']), ('Nombre completo de quien recibe', datos['recibe']), ('Nombre completo de quien entrega', datos['entrega'])]),
          ('CONFORMIDAD', [('Declaración', 'Quien recibe declara haber recibido el importe indicado para el requerimiento identificado en este recibo.'), ('Respaldo', 'Imprimir, firmar por ambas partes y adjuntar el PDF firmado en Tesorería. Para transferencia o QR, adjuntar también el comprobante de la operación.')])],
         [('Referencia del recibo', datos['referencia']), ('Fecha de emisión', datos['fecha'])],
         unidad='TESORERÍA', espaciado=True, firmas=[([], datos['recibe'], 'Firma de quien recibe'), ([], datos['entrega'], 'Firma de quien entrega')],
