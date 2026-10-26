@@ -33,8 +33,8 @@
             <label>Cantidad <em>*</em><input v-model.number="form.cantidad" type="number" min="1" required></label>
             <label>Monto estimado (Bs)
               <input v-monto inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" v-model="form.monto_estimado" type="text" min="0" step="0.01" placeholder="Ej.: 850.00">
-              <span v-if="Number(form.monto_estimado) > 1000" style="color:var(--sigta-error); font-weight:bold; font-size:11px; display:block; margin-top:4px;">
-                ⚠️ Advertencia: El monto supera el límite de Caja Chica (Bs 1.000,00).
+              <span v-if="reglas.cargado && Number(form.monto_estimado) > reglas.limite_caja_chica" style="color:var(--sigta-error); font-weight:bold; font-size:11px; display:block; margin-top:4px;">
+                ⚠️ Advertencia: El monto supera el límite de Caja Chica (Bs {{ Number(reglas.limite_caja_chica).toFixed(2) }}).
               </span>
             </label>
             <label>Centro de costo<input v-model="form.centro_costo" placeholder="Opcional"></label>
@@ -69,6 +69,7 @@ import UsuarioHeader from '../components/UsuarioHeader.vue'
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import SolicitanteMenu from '../components/SolicitanteMenu.vue'
+import { reglas } from '../utils/reglas.js'
 const router=useRouter(),areas=ref([]),guardando=ref(false),mensaje=ref('')
 const form=reactive({titulo:'',descripcion:'',area:'',tipo:'',cantidad:1,monto_estimado:'',centro_costo:'',ticket_soporte_vinculado:'',especificaciones:'',justificacion:''})
 const archivos=reactive({informe:null,poa:null,pedido:null,proforma:null})

@@ -1,7 +1,20 @@
 from django.conf import settings
 from django.db import models
 
+from usuarios.almacenamiento import AlmacenamientoPrivado
 from usuarios.models import Area
+
+ESTADOS_TICKET_ACTIVOS_TECNICO = (
+    "ABIERTO",
+    "EN_PROCESO",
+    "EN_ANALISIS",
+    "ASIGNADO",
+    "EN_DIAGNOSTICO",
+    "EN_EJECUCION",
+    "EN_VERIFICACION",
+    "PENDIENTE_CONFORMIDAD",
+    "PENDIENTE_INFORME_FINAL",
+)
 
 
 # ==========================================================
@@ -559,6 +572,31 @@ class Ticket(models.Model):
     # ======================================================
 
     @property
+    def fecha_limite(self):
+        return self.sla_fecha_limite
+
+    @fecha_limite.setter
+    def fecha_limite(self, value):
+        self.sla_fecha_limite = value
+
+    @property
+    def fecha_cierre(self):
+        return self.cerrado_en
+
+    @fecha_cierre.setter
+    def fecha_cierre(self, value):
+        self.cerrado_en = value
+
+    @property
+    def vencido(self):
+        if not self.fecha_limite:
+            return False
+        if self.estado and self.estado.codigo in ['RESUELTO', 'CERRADO']:
+            return False
+        from django.utils import timezone
+        return timezone.now() > self.fecha_limite
+
+    @property
     def tiene_sla(self):
 
         return (
@@ -611,3 +649,23 @@ class NotificacionSoporte(models.Model):
 
     def __str__(self):
         return f"{self.destinatario_id} · {self.titulo}"
+
+
+class CotizacionRequerimientoTicket(models.Model):
+    ticket = models.ForeignKey(
+        Ticket,
+        on_delete=models.CASCADE,
+        related_name="cotizaciones_requerimiento",
+    )
+    proveedor = models.CharField(max_length=200)
+    documento = models.FileField(
+        upload_to="soporte/cotizaciones/%Y/%m/",
+        storage=AlmacenamientoPrivado(),
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.ticket.codigo} · {self.proveedor}"
