@@ -1115,13 +1115,12 @@ class TicketSerializer(
                     cat_code = str(cat).upper()
 
         cat_name = str(getattr(cat, 'nombre', '')).strip().upper() if cat else ''
-        categorias_alta = {str(c).strip().upper() for c in getattr(settings, 'SIA_CATEGORIAS_PRIORIDAD_ALTA', ['RED', 'SERVIDORES'])}
+        categorias_alta = {str(c).strip().upper() for c in settings.SIA_CATEGORIAS_PRIORIDAD_ALTA}
         equipo_normalizado = equipo.strip().upper()
         if (
             cat_code in categorias_alta
             or cat_name in categorias_alta
             or equipo_normalizado in categorias_alta
-            or equipo_normalizado in {"REDES", "SERVIDOR"}
         ):
             attrs['prioridad'] = 'ALTA'
 
@@ -1134,12 +1133,7 @@ class TicketSerializer(
             est_destino = nuevo_estado.codigo if hasattr(nuevo_estado, 'codigo') else str(nuevo_estado)
 
             if est_origen != est_destino:
-                transiciones_validas = {
-                    'ABIERTO': ['EN_PROCESO'],
-                    'EN_PROCESO': ['RESUELTO'],
-                    'RESUELTO': ['CERRADO', 'EN_PROCESO'],
-                    'CERRADO': ['EN_PROCESO'],
-                }
+                transiciones_validas = settings.SIA_TRANSICIONES_ESTADO
                 destinos_posibles = transiciones_validas.get(est_origen, [])
                 if est_destino not in destinos_posibles:
                     raise serializers.ValidationError({
@@ -1162,7 +1156,7 @@ class TicketSerializer(
                             "detalle": "Solo el usuario solicitante puede reabrir el ticket."
                         })
                     fcierre = self.instance.fecha_cierre or self.instance.cerrado_en
-                    dias_reapertura = getattr(settings, "SIA_DIAS_REAPERTURA", 7)
+                    dias_reapertura = settings.SIA_DIAS_REAPERTURA
                     if not fcierre:
                         raise serializers.ValidationError({"detalle": "No se puede reabrir el ticket porque no tiene fecha de cierre registrada."})
                     if (timezone.now() - fcierre).total_seconds() > dias_reapertura * 86400:
@@ -1242,7 +1236,7 @@ class TicketSerializer(
                 )
                 if self.instance and self.instance.pk:
                     activos_count = activos_count.exclude(pk=self.instance.pk)
-                max_activos = getattr(settings, "SIA_MAX_TICKETS_ACTIVOS_TECNICO", 5)
+                max_activos = settings.SIA_MAX_TICKETS_ACTIVOS_TECNICO
                 if activos_count.count() >= max_activos:
                     raise serializers.ValidationError({
                         "tecnico_asignado": f"El especialista ya tiene {activos_count.count()} tareas activas. El límite es {max_activos}; seleccione otro especialista."
@@ -1261,7 +1255,7 @@ class TicketSerializer(
             return super().update(instance, validated_data)
 
         from usuarios.models import Usuario
-        max_activos = getattr(settings, "SIA_MAX_TICKETS_ACTIVOS_TECNICO", 5)
+        max_activos = settings.SIA_MAX_TICKETS_ACTIVOS_TECNICO
         with transaction.atomic():
             Usuario.objects.select_for_update().get(pk=tecnico.pk)
             activos = Ticket.objects.filter(
@@ -1401,7 +1395,7 @@ class TicketSerializer(
         sla_horas = None
         sla_fecha_limite = None
         if prioridad:
-            horas_map = getattr(settings, "SIA_SLA_HORAS", {"ALTA": 4, "MEDIA": 24, "BAJA": 72})
+            horas_map = settings.SIA_SLA_HORAS
             sla_horas = horas_map.get(str(prioridad).upper(), 24)
             try:
                 from zoneinfo import ZoneInfo
@@ -1415,18 +1409,14 @@ class TicketSerializer(
         categoria = validated_data.get("categoria")
         if categoria is None and self.instance:
             categoria = self.instance.categoria
-        categorias_alta = {str(c).strip().upper() for c in getattr(settings, "SIA_CATEGORIAS_PRIORIDAD_ALTA", ["RED", "SERVIDORES"])}
-        if "RED" in categorias_alta:
-            categorias_alta.add("REDES")
-        if "SERVIDORES" in categorias_alta:
-            categorias_alta.add("SERVIDOR")
+        categorias_alta = {str(c).strip().upper() for c in settings.SIA_CATEGORIAS_PRIORIDAD_ALTA}
         equipo_prioridad = str(validated_data.get("equipo_afectado", "")).strip().upper()
         if categoria and (
             str(categoria.codigo).strip().upper() in categorias_alta
             or str(categoria.nombre).strip().upper() in categorias_alta
-        ) or equipo_prioridad in categorias_alta | {"REDES", "SERVIDOR"}:
+        ) or equipo_prioridad in categorias_alta:
             prioridad = "ALTA"
-            sla_horas = getattr(settings, "SIA_SLA_HORAS", {}).get("ALTA", 4)
+            sla_horas = settings.SIA_SLA_HORAS["ALTA"]
             try:
                 from zoneinfo import ZoneInfo
                 tz_lp = ZoneInfo("America/La_Paz")
@@ -1442,7 +1432,7 @@ class TicketSerializer(
             except Exception:
                 import pytz
                 tz_lp = pytz.timezone("America/La_Paz")
-            sla_horas = getattr(settings, "SIA_SLA_HORAS", {"ALTA": 4}).get("ALTA", 4)
+            sla_horas = settings.SIA_SLA_HORAS["ALTA"]
             sla_fecha_limite = timezone.now().astimezone(tz_lp) + timedelta(hours=sla_horas)
 
         if prioridad and not sla_fecha_limite:
@@ -1452,7 +1442,7 @@ class TicketSerializer(
             except Exception:
                 import pytz
                 tz_lp = pytz.timezone("America/La_Paz")
-            sla_horas = getattr(settings, "SIA_SLA_HORAS", {"ALTA": 4, "MEDIA": 24, "BAJA": 72}).get(str(prioridad).upper(), 24)
+            sla_horas = settings.SIA_SLA_HORAS.get(str(prioridad).upper(), settings.SIA_SLA_HORAS["MEDIA"])
             sla_fecha_limite = timezone.now().astimezone(tz_lp) + timedelta(hours=sla_horas)
 
         ticket = (

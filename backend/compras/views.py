@@ -162,7 +162,7 @@ def respuesta_sin_permiso(codigo_permiso):
 
 def calcular_saldo_caja_chica():
     ahora = timezone.now()
-    fondo = Decimal(str(getattr(settings, "SIA_FONDO_MENSUAL", 5000.0)))
+    fondo = Decimal(str(settings.SIA_FONDO_MENSUAL))
     estados_comprometidos = [
         "APROBADO_PARA_DESEMBOLSO",
         "FONDOS_DESEMBOLSADOS",
@@ -711,12 +711,13 @@ class SolicitudCompraViewSet(
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Si monto > 300 solo puede ser aprobada por Jefe administrativo
+        # El umbral de aprobaciÃ³n por Jefe administrativo se configura en settings.
         monto = solicitud.monto_estimado or Decimal("0.00")
-        if monto > 300:
+        umbral_aprobacion_jefe = Decimal(str(settings.SIA_UMBRAL_APROBACION_JEFE))
+        if monto > umbral_aprobacion_jefe:
             if not es_jefe_admin:
                 return Response(
-                    {"detalle": "Las compras mayores a Bs 300 solo pueden ser aprobadas por usuarios pertenecientes al grupo 'Jefe administrativo'."},
+                    {"detalle": f"Las compras mayores a Bs {umbral_aprobacion_jefe:.2f} solo pueden ser aprobadas por usuarios pertenecientes al grupo 'Jefe administrativo'."},
                     status=status.HTTP_403_FORBIDDEN
                 )
         else:

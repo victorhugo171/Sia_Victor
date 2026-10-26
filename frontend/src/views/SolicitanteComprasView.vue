@@ -408,7 +408,7 @@
                 step="0.01"
                 placeholder="Opcional"
               />
-              <div v-if="Number(form.monto_estimado) > reglas.limite_caja_chica" class="error" style="margin-top:6px; font-size:12px;">
+              <div v-if="reglas.cargado && Number(form.monto_estimado) > reglas.limite_caja_chica" class="error" style="margin-top:6px; font-size:12px;">
                 ⚠️ Advertencia: El monto estimado (Bs {{ Number(form.monto_estimado).toFixed(2) }}) supera el límite de Caja Chica (Bs. {{ Number(reglas.limite_caja_chica).toFixed(2) }}).
               </div>
 

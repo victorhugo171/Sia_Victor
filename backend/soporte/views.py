@@ -106,19 +106,21 @@ def _migrar_cotizacion_legacy(ticket):
 
 
 def _error_regla_02_ticket(ticket):
-    if ticket.costo_estimado is None or ticket.costo_estimado <= Decimal("500.00"):
+    umbral = Decimal(str(settings.SIA_UMBRAL_COTIZACIONES))
+    minimo = int(settings.SIA_MIN_COTIZACIONES)
+    if ticket.costo_estimado is None or ticket.costo_estimado <= umbral:
         return None
     cotizaciones = list(ticket.cotizaciones_requerimiento.all())
     if not cotizaciones and ticket.cotizacion_archivo:
         cotizaciones = [ticket]
-    if len(cotizaciones) < 3:
-        return "Los requerimientos mayores a Bs 500.00 requieren al menos 3 cotizaciones adjuntas."
+    if len(cotizaciones) < minimo:
+        return f"Los requerimientos mayores a Bs {umbral:.2f} requieren al menos {minimo} cotizaciones adjuntas."
     proveedores = {
         str(c.proveedor if c is not ticket else ticket.proveedor_cotizacion).strip().casefold()
         for c in cotizaciones
     }
-    if "" in proveedores or len(proveedores) < 3:
-        return "Las cotizaciones deben corresponder a 3 proveedores distintos."
+    if "" in proveedores or len(proveedores) < minimo:
+        return f"Las cotizaciones deben corresponder a {minimo} proveedores distintos."
     return None
 
 
@@ -188,12 +190,7 @@ def _categoria_por_defecto():
 #
 # ==========================================================
 
-SLA_POR_PRIORIDAD = {
-    "CRITICA": 4,
-    "ALTA": 4,
-    "MEDIA": 24,
-    "BAJA": 72,
-}
+SLA_POR_PRIORIDAD = settings.SIA_SLA_HORAS
 
 
 # ==========================================================
@@ -539,7 +536,7 @@ class TicketViewSet(
             )
         # R06: Dentro de 7 días posteriores a fecha_cierre
         fcierre = ticket.fecha_cierre or ticket.cerrado_en
-        dias = getattr(settings, "SIA_DIAS_REAPERTURA", 7)
+        dias = settings.SIA_DIAS_REAPERTURA
         if not fcierre:
             return Response({"detalle": "No se puede reabrir el ticket porque no tiene fecha de cierre registrada."}, status=status.HTTP_400_BAD_REQUEST)
         if (timezone.now() - fcierre).total_seconds() > dias * 86400:
@@ -1159,9 +1156,8 @@ class TicketViewSet(
 
         categorias_alta = {
             str(c).strip().upper()
-            for c in getattr(settings, "SIA_CATEGORIAS_PRIORIDAD_ALTA", ["RED", "SERVIDORES"])
+            for c in settings.SIA_CATEGORIAS_PRIORIDAD_ALTA
         }
-        categorias_alta.update({"REDES", "SERVIDOR"})
         equipo = str(ticket.equipo_afectado or "").strip().upper()
         categoria_codigo = str(ticket.categoria.codigo if ticket.categoria else "").strip().upper()
         categoria_nombre = str(ticket.categoria.nombre if ticket.categoria else "").strip().upper()
@@ -1430,7 +1426,7 @@ class TicketViewSet(
                 tecnico_asignado=tecnico,
                 estado__codigo__in=ESTADOS_TICKET_ACTIVOS_TECNICO
             ).exclude(pk=ticket.pk)
-            max_activos = getattr(settings, "SIA_MAX_TICKETS_ACTIVOS_TECNICO", 5)
+            max_activos = settings.SIA_MAX_TICKETS_ACTIVOS_TECNICO
             if activos.count() >= max_activos:
                 return Response(
                     {"tecnico_id": f"El especialista ya tiene {activos.count()} tareas activas. El límite es {max_activos}; seleccione otro especialista."},
@@ -1953,7 +1949,7 @@ class TicketViewSet(
 
         # REGLA 01: Límite de Caja Chica en requerimiento de componente
         from django.conf import settings
-        limite_val = getattr(settings, 'SIA_LIMITE_CAJA_CHICA', 1000.0)
+        limite_val = settings.SIA_LIMITE_CAJA_CHICA
         limite_cc = Decimal(str(limite_val))
         if costo_estimado is not None and costo_estimado > limite_cc:
             return Response(
@@ -1972,16 +1968,18 @@ class TicketViewSet(
         if not cotizaciones_existentes and ticket.cotizacion_archivo:
             cotizaciones_validables.append((ticket.proveedor_cotizacion, ticket.cotizacion_archivo))
         cotizaciones_validables.extend(datos_cotizaciones)
-        if costo_estimado is not None and costo_estimado > Decimal("500.00"):
+        umbral_cotizaciones = Decimal(str(settings.SIA_UMBRAL_COTIZACIONES))
+        minimo_cotizaciones = int(settings.SIA_MIN_COTIZACIONES)
+        if costo_estimado is not None and costo_estimado > umbral_cotizaciones:
             proveedores_distintos = {proveedor.strip().casefold() for proveedor, _ in cotizaciones_validables if proveedor.strip()}
-            if len(cotizaciones_validables) < 3:
+            if len(cotizaciones_validables) < minimo_cotizaciones:
                 return Response(
-                    {"cotizaciones": "Los requerimientos mayores a Bs 500.00 requieren adjuntar al menos 3 cotizaciones."},
+                    {"cotizaciones": f"Los requerimientos mayores a Bs {umbral_cotizaciones:.2f} requieren adjuntar al menos {minimo_cotizaciones} cotizaciones."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            if len(proveedores_distintos) < 3:
+            if len(proveedores_distintos) < minimo_cotizaciones:
                 return Response(
-                    {"cotizaciones": "Las cotizaciones deben corresponder a proveedores distintos; registre 3 proveedores diferentes."},
+                    {"cotizaciones": f"Las cotizaciones deben corresponder a {minimo_cotizaciones} proveedores diferentes."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
         elif not cotizaciones_validables:

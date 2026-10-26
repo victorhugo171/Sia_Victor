@@ -149,13 +149,13 @@
           <label class="campo">Costo estimado (Bs.)
             <input v-monto inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" v-model="formComponente.costo_estimado" type="text" min="0" step="0.01">
           </label>
-          <div v-if="Number(formComponente.costo_estimado) > reglas.limite_caja_chica" class="alerta-error-roja" style="background:#fee2e2; border:1px solid #ef4444; color:#b91c1c; padding:8px 12px; border-radius:6px; margin:6px 0 10px 0; font-weight:600; font-size:12px;">
+          <div v-if="reglas.cargado && Number(formComponente.costo_estimado) > reglas.limite_caja_chica" class="alerta-error-roja" style="background:#fee2e2; border:1px solid #ef4444; color:#b91c1c; padding:8px 12px; border-radius:6px; margin:6px 0 10px 0; font-weight:600; font-size:12px;">
             ⚠️ Advertencia: El costo estimado de la cotización (Bs. {{ Number(formComponente.costo_estimado).toFixed(2) }}) no debe superar el límite de Caja Chica (Bs. {{ Number(reglas.limite_caja_chica).toFixed(2) }}).
           </div>
           <a v-if="ordenAbierta?.informe_compra" :href="ordenAbierta.informe_compra" target="_blank">Ver informe de requerimiento generado</a>
           <div class="cotizaciones-requerimiento">
             <div v-for="(cotizacion, indice) in formComponente.cotizaciones" :key="indice" class="cotizacion-requerimiento">
-              <b>Cotización {{ indice + 1 }}<span v-if="indice < 3 && Number(formComponente.costo_estimado) > 500"> · requerida</span></b>
+              <b>Cotización {{ indice + 1 }}<span v-if="reglas.cargado && indice < Number(reglas.min_cotizaciones) && Number(formComponente.costo_estimado) > Number(reglas.umbral_cotizaciones)"> · requerida</span></b>
               <label class="campo">Proveedor
                 <input v-model="cotizacion.proveedor" placeholder="Nombre del proveedor" required>
               </label>
@@ -164,10 +164,10 @@
               </label>
               <a v-if="cotizacion.documento_url" :href="cotizacion.documento_url" target="_blank">Ver documento guardado</a>
               <small v-if="cotizacion.archivo">{{ cotizacion.archivo.name }}</small>
-              <button v-if="formComponente.cotizaciones.length > (Number(formComponente.costo_estimado) > 500 ? 3 : 1)" type="button" @click="quitarCotizacion(indice)">Quitar</button>
+              <button v-if="formComponente.cotizaciones.length > (reglas.cargado && Number(formComponente.costo_estimado) > Number(reglas.umbral_cotizaciones) ? Number(reglas.min_cotizaciones) : 1)" type="button" @click="quitarCotizacion(indice)">Quitar</button>
             </div>
             <button type="button" @click="agregarCotizacion">Añadir otra cotización</button>
-            <small v-if="Number(formComponente.costo_estimado) > 500">Para montos mayores a Bs. 500 debe adjuntar al menos 3 cotizaciones de proveedores distintos.</small>
+            <small v-if="reglas.cargado && Number(formComponente.costo_estimado) > Number(reglas.umbral_cotizaciones)">Para montos mayores a Bs. {{ Number(reglas.umbral_cotizaciones).toFixed(2) }} debe adjuntar al menos {{ reglas.min_cotizaciones }} cotizaciones de proveedores distintos.</small>
           </div>
           <div v-if="errorRequerimiento" class="alerta-error-roja" style="background:#fee2e2; border:1px solid #ef4444; color:#b91c1c; padding:10px 14px; border-radius:6px; margin:10px 0; font-weight:600; font-size:13px;">
             ⚠️ {{ errorRequerimiento }}
@@ -615,6 +615,10 @@ const formIntervencion = reactive({ solucion: '', acciones_realizadas: '', compo
 const formPruebas = reactive({ resultado_pruebas: '', funciona_tecnicamente: null, informe_tecnico: '', archivo: null })
 
 function recibirOrden(t) {
+  if (!reglas.cargado) {
+    mostrarMensaje('Configuración no disponible', 'No se pudo cargar la configuración de reglas. Recargue la página e inténtelo nuevamente.', 'error')
+    return
+  }
   ordenAbierta.value = t
   modoComponente.value = false
   formDiagnostico.diagnostico = ''
@@ -624,7 +628,7 @@ function recibirOrden(t) {
   const cotizaciones = (t.cotizaciones_requerimiento || []).map(c => ({ proveedor:c.proveedor || '', archivo:null, documento_url:c.documento_url || '' }))
   if (!cotizaciones.length && t.cotizacion_archivo_url) cotizaciones.push({ proveedor:t.proveedor_cotizacion || '', archivo:null, documento_url:t.cotizacion_archivo_url })
   const costoEstimado = t.costo_estimado || ''
-  const minimoCotizaciones = Number(costoEstimado) > 500 ? 3 : 1
+  const minimoCotizaciones = reglas.cargado && Number(costoEstimado) > Number(reglas.umbral_cotizaciones) ? Number(reglas.min_cotizaciones) : 1
   while (cotizaciones.length < minimoCotizaciones) cotizaciones.push({ proveedor:'', archivo:null, documento_url:'' })
   if (!cotizaciones.length) cotizaciones.push({ proveedor:'', archivo:null, documento_url:'' })
   Object.assign(formComponente, { componente_requerido:t.componente_requerido||'', cantidad_componente:t.cantidad_componente||1, especificaciones_tecnicas:t.especificaciones_tecnicas||'', justificacion_compra:t.justificacion_compra||'', proveedor_cotizacion:t.proveedor_cotizacion||'', costo_estimado, cotizaciones })
@@ -665,7 +669,8 @@ async function guardarDiagnostico() {
 
 const cotizacionesAdjuntas = computed(() => formComponente.cotizaciones.filter(c => c.proveedor.trim() && (c.archivo || c.documento_url)))
 const cotizacionesValidas = computed(() => {
-  const minimo = Number(formComponente.costo_estimado) > 500 ? 3 : 1
+  if (!reglas.cargado) return false
+  const minimo = Number(formComponente.costo_estimado) > Number(reglas.umbral_cotizaciones) ? Number(reglas.min_cotizaciones) : 1
   const proveedores = new Set(cotizacionesAdjuntas.value.map(c => c.proveedor.trim().toLocaleLowerCase()))
   return cotizacionesAdjuntas.value.length >= minimo && proveedores.size >= minimo
 })
@@ -684,8 +689,8 @@ function quitarCotizacion(indice) {
 }
 
 watch(() => formComponente.costo_estimado, monto => {
-  if (Number(monto) > 500) {
-    while (formComponente.cotizaciones.length < 3) agregarCotizacion()
+  if (reglas.cargado && Number(monto) > Number(reglas.umbral_cotizaciones)) {
+    while (formComponente.cotizaciones.length < Number(reglas.min_cotizaciones)) agregarCotizacion()
     return
   }
   while (formComponente.cotizaciones.length > 1) {
@@ -716,6 +721,11 @@ async function guardarBorrador() {
 
 async function enviarRequerimiento() {
   errorRequerimiento.value = ''
+  if (!reglas.cargado) {
+    errorRequerimiento.value = 'No se pudo cargar la configuración de reglas. Recargue la página e inténtelo nuevamente.'
+    mostrarMensaje('Configuración no disponible', errorRequerimiento.value, 'error')
+    return
+  }
   if (Number(formComponente.costo_estimado) > reglas.limite_caja_chica) {
     errorRequerimiento.value = `El monto del requerimiento (Bs ${Number(formComponente.costo_estimado).toFixed(2)}) supera el límite máximo permitido de Caja Chica (Bs ${Number(reglas.limite_caja_chica).toFixed(2)}).`
     mostrarMensaje('Límite de Caja Chica superado', errorRequerimiento.value, 'error')

@@ -33,7 +33,7 @@
             <label>Cantidad <em>*</em><input v-model.number="form.cantidad" type="number" min="1" required></label>
             <label>Monto estimado (Bs)
               <input v-monto inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" v-model="form.monto_estimado" type="text" min="0" step="0.01" placeholder="Ej.: 850.00">
-              <span v-if="Number(form.monto_estimado) > reglas.limite_caja_chica" style="color:var(--sigta-error); font-weight:bold; font-size:11px; display:block; margin-top:4px;">
+              <span v-if="reglas.cargado && Number(form.monto_estimado) > reglas.limite_caja_chica" style="color:var(--sigta-error); font-weight:bold; font-size:11px; display:block; margin-top:4px;">
                 ⚠️ Advertencia: El monto supera el límite de Caja Chica (Bs {{ Number(reglas.limite_caja_chica).toFixed(2) }}).
               </span>
             </label>

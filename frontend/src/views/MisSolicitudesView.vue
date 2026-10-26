@@ -1214,6 +1214,7 @@ import SolicitanteMenu
 
 import IconoSigta
   from '../components/IconoSigta.vue'
+import { reglas } from '../utils/reglas.js'
 
 
 const router =
@@ -1241,7 +1242,7 @@ const categorias =
 
 const prioridadCategoriaAlta = computed(() => {
   const categoria = categorias.value.find(c => String(c.id) === String(form.categoria))
-  return ['RED', 'SERVIDORES'].includes(String(categoria?.codigo || '').toUpperCase())
+  return reglas.categorias_prioridad_alta.includes(String(categoria?.codigo || '').trim().toUpperCase())
 })
 
 function ajustarPrioridadCategoria() {
