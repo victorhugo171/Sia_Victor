@@ -631,7 +631,7 @@ function recibirOrden(t) {
   const minimoCotizaciones = reglas.cargado && Number(costoEstimado) > Number(reglas.umbral_cotizaciones) ? Number(reglas.min_cotizaciones) : 1
   while (cotizaciones.length < minimoCotizaciones) cotizaciones.push({ proveedor:'', archivo:null, documento_url:'' })
   if (!cotizaciones.length) cotizaciones.push({ proveedor:'', archivo:null, documento_url:'' })
-  Object.assign(formComponente, { componente_requerido:t.componente_requerido||'', cantidad_componente:t.cantidad_componente||1, especificaciones_tecnicas:t.especificaciones_tecnicas||'', justificacion_compra:t.justificacion_compra||'', proveedor_cotizacion:t.proveedor_cotizacion||'', costo_estimado, cotizaciones })
+  Object.assign(formComponente, { componente_requerido:t.componente_requerido||'', cantidad_componente:t.cantidad_componente||1, especificaciones_tecnicas:t.especificaciones_tecnicas||'', justificacion_compra:t.justificacion_compra||'', proveedor_cotizacion:t.proveedor_cotizacion||'', costo_estimado:costoEstimado, cotizaciones })
 }
 
 function cerrarOrden() {
