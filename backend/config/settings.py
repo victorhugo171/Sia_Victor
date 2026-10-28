@@ -197,7 +197,7 @@ PASSWORD_HASHERS = [
 # CONFIGURACIÓN SIA - REGLAS DE NEGOCIO (CAJA CHICA)
 # ==========================================================
 
-SIA_LIMITE_CAJA_CHICA = float(os.environ.get('SIA_LIMITE_CAJA_CHICA', '1000.0'))
+SIA_LIMITE_CAJA_CHICA = float(os.environ.get('SIA_LIMITE_CAJA_CHICA', '100.0'))
 
 # Reglas de negocio configurables para compras y soporte.
 SIA_UMBRAL_COTIZACIONES = float(os.environ.get('SIA_UMBRAL_COTIZACIONES', '500.0'))
@@ -217,7 +217,7 @@ SIA_SLA_HORAS = {
     'BAJA': int(os.environ.get('SIA_SLA_BAJA', '72')),
 }
 SIA_DIAS_REAPERTURA = int(os.environ.get('SIA_DIAS_REAPERTURA', '7'))
-SIA_MAX_TICKETS_ACTIVOS_TECNICO = int(os.environ.get('SIA_MAX_TICKETS_ACTIVOS_TECNICO', '5'))
+SIA_MAX_TICKETS_ACTIVOS_TECNICO = int(os.environ.get('SIA_MAX_TICKETS_ACTIVOS_TECNICO', '1'))
 SIA_UMBRAL_APROBACION_JEFE = float(os.environ.get('SIA_UMBRAL_APROBACION_JEFE', '300.0'))
 SIA_FONDO_MENSUAL = float(os.environ.get('SIA_FONDO_MENSUAL', '5000.0'))
 SIA_MIN_PASSWORD_LENGTH = int(os.environ.get('SIA_MIN_PASSWORD_LENGTH', '10'))
